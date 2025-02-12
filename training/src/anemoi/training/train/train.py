@@ -439,6 +439,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
             graph_filename = Path(
                 self.config.hardware.paths.graph,
                 graph_label,
+                ".pt",
             )
 
             if graph_filename.exists() and not self.config.graph.overwrite:
@@ -450,7 +451,10 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
                 graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph.attributes.nodes) #empty graph
-                graph = GraphCreator(config=graph_config).update_graph(graph)
+                gc = GraphCreator(config=graph_config)
+                graph = gc.update_graph(graph)
+                graph = gc.clean(graph)
+                gc.save(graph, graph_filename)
             graph_data_[graph_label] = graph
         return graph_data_
 
