@@ -52,18 +52,37 @@ grid_indices:
 # You can make these as complicated for merging as you like
 # See https://anemoi-datasets.readthedocs.io
 # ============
+select: 
+      - q_200
+      - w_200
+      - z
+      - tp
+      - "cos_latitude"
+      - "cos_longitude"
+      - "sin_latitude"
+      - "sin_longitude"
+      - "cos_julian_day"
+      - "cos_local_time"
+      - "sin_julian_day"
+      - "sin_local_time"
+      - "insolation"
+      - "lsm"
 
 datasets: 
   MEPS:
     cutout:
-      - /
-      - ${hardware.paths.data}/${hardware.files.dataset}
+      - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
+        thinning: 25
+      - dataset: ${hardware.paths.data}/${hardware.files.dataset}
     adjust: all
+    select: ${dataloader.select}
   ARA:
     cutout:
-      - /
-      - ${hardware.paths.data}/${hardware.files.dataset}
+      - dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
+        thinning: 25
+      - dataset: ${hardware.paths.data}/${hardware.files.dataset}
     adjust: all
+    select: ${dataloader.select}
 
 training:
   dataset: ${dataloader.datasets}

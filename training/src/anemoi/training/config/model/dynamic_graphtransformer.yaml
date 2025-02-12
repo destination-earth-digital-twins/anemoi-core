@@ -1,5 +1,5 @@
 activation: GELU
-num_channels: 1024
+num_channels: 128
 node_dim: 4
 edge_dim: 3
 

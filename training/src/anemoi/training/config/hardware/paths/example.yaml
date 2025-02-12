@@ -1,6 +1,6 @@
-data: ???
-grids: ???
-output: ???
+data: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/
+#grids: ???
+output: /pfs/lustrep4/scratch/project_465000527/salihiar/output
 logs:
   base: ${hardware.paths.output}logs/
   wandb: ${hardware.paths.logs.base}
