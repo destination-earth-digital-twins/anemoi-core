@@ -32,7 +32,6 @@ from anemoi.training.diagnostics.logger import get_tensorboard_logger
 from anemoi.training.diagnostics.logger import get_wandb_logger
 from anemoi.training.distributed.strategy import DDPGroupStrategy
 from anemoi.training.train.forecaster import GraphForecaster
-from anemoi.training.utils.checkpoint import freeze_submodule_by_name
 from anemoi.training.utils.checkpoint import transfer_learning_loading
 from anemoi.training.utils.jsonify import map_config_to_primitives
 from anemoi.training.utils.seeding import get_base_seed
@@ -156,28 +155,17 @@ class AnemoiTrainer:
 
         model = GraphForecaster(**kwargs)
 
-        # Load the model weights
         if self.load_weights_only:
-            if hasattr(self.config.training, "transfer_learning"):
-                # Sanify the checkpoint for transfer learning
-                if self.config.training.transfer_learning:
-                    LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
-                    model = transfer_learning_loading(model, self.last_checkpoint)
-                else:
-                    LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
-                    model = GraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
+            # Sanify the checkpoint for transfer learning
+            if self.config.training.transfer_learning:
+                LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
+                return transfer_learning_loading(model, self.last_checkpoint)
 
-            else:
-                LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
-                model = GraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
+            LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
 
-        if hasattr(self.config.training, "submodules_to_freeze"):
-            # Freeze the chosen model weights
-            LOGGER.info("The following submodules will NOT be trained: %s", self.config.training.submodules_to_freeze)
-            for submodule_name in self.config.training.submodules_to_freeze:
-                freeze_submodule_by_name(model, submodule_name)
-                LOGGER.info("%s frozen successfully.", submodule_name.upper())
+            return GraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
 
+        LOGGER.info("Model initialised from scratch.")
         return model
 
     @rank_zero_only
@@ -428,9 +416,42 @@ class AnemoiTrainer:
         )
 
         if self.config.diagnostics.print_memory_summary:
-            LOGGER.info("memory summary: %s", torch.cuda.memory_summary())
+            LOGGER.debug("memory summary: %s", torch.cuda.memory_summary())
 
         LOGGER.debug("---- DONE. ----")
+
+
+class AnemoiMultiDomainTrainer:
+    """Utility class for training the model."""
+
+    @cached_property
+    def graph_data(self) -> HeteroData:
+        """Graph data.
+
+        Creates the graph in all workers.
+        """
+        graph_data_ = []
+        for dataset in config.dataloader.datasets:
+            graph_label = dataset.split('/')[-1]
+
+            graph_filename = Path(
+                self.config.hardware.paths.graph,
+                graph_label,
+            )
+
+            if graph_filename.exists() and not self.config.graph.overwrite:
+                LOGGER.info("Loading graph data from %s", graph_filename)
+                graph = torch.load(graph_filename)
+            else:
+                from anemoi.graphs.create import GraphCreator
+
+                graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
+                graph = GraphCreator(config=graph_config).create(
+                    save_path=graph_filename,
+                    overwrite=self.config.graph.overwrite,
+                )
+            graph_data_.append(graph)
+        return graph_data_
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
