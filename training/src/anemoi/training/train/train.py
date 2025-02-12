@@ -421,8 +421,11 @@ class AnemoiTrainer:
         LOGGER.debug("---- DONE. ----")
 
 
-class AnemoiMultiDomainTrainer:
+class AnemoiMultiDomainTrainer(AnemoiTrainer):
     """Utility class for training the model."""
+    def __init__(self, config):
+        super().__init__(config)
+        self.config = config
 
     @cached_property
     def graph_data(self) -> HeteroData:
@@ -430,9 +433,8 @@ class AnemoiMultiDomainTrainer:
 
         Creates the graph in all workers.
         """
-        graph_data_ = []
-        for dataset in config.dataloader.datasets:
-            graph_label = dataset.split('/')[-1]
+        graph_data_ = {}
+        for graph_label, dataset in self.config.dataloader.datasets.items(): #Has to be a dictionary
 
             graph_filename = Path(
                 self.config.hardware.paths.graph,
@@ -444,13 +446,12 @@ class AnemoiMultiDomainTrainer:
                 graph = torch.load(graph_filename)
             else:
                 from anemoi.graphs.create import GraphCreator
+                from anemoi.graphs.nodes import ZarrDatasetNodes
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
-                graph = GraphCreator(config=graph_config).create(
-                    save_path=graph_filename,
-                    overwrite=self.config.graph.overwrite,
-                )
-            graph_data_.append(graph)
+                graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph.attributes.nodes) #empty graph
+                graph = GraphCreator(config=graph_config).update_graph(graph)
+            graph_data_[graph_label] = graph
         return graph_data_
 
 
