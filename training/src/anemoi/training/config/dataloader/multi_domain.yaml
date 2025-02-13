@@ -36,7 +36,7 @@ batch_size:
 # if null then we run through all the batches
 limit_batches:
   training: null
-  validation: null
+  validation: 0 #null
   test: 20
   predict: 20
 
@@ -77,6 +77,8 @@ datasets:
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
         select: ${dataloader.select}
     adjust: all
+    start: null
+    end: null
     
   ARA:
     cutout:
@@ -86,13 +88,18 @@ datasets:
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
         select: ${dataloader.select}
     adjust: all
+    start: null
+    end: null
     
     
 
+# TODO: fix validation start and end
+# TODO: Make the dataset key more tidier for train and val
+
 training:
   dataset: ${dataloader.datasets}
-  start: null
-  end: 2020
+  #start: null
+  #end: 2020
   frequency: ${data.frequency}
   drop:  []
 
