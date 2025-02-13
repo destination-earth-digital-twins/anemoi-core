@@ -53,6 +53,7 @@ class WeightedMSELoss(BaseWeightedLoss):
         squash: bool = True,
         scalar_indices: tuple[int, ...] | None = None,
         without_scalars: list[str] | list[int] | None = None,
+        graph_label: str = None
     ) -> torch.Tensor:
         """Calculates the lat-weighted MSE loss.
 
@@ -75,6 +76,9 @@ class WeightedMSELoss(BaseWeightedLoss):
         torch.Tensor
             Weighted MSE loss
         """
+        
+        # added graph label to fetch correct node weights for different domains
+
         out = torch.square(pred - target)
         out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-        return self.scale_by_node_weights(out, squash)
+        return self.scale_by_node_weights(out, squash, graph_label)

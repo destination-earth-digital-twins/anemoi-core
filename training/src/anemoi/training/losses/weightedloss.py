@@ -30,7 +30,7 @@ class BaseWeightedLoss(nn.Module, ABC):
 
     def __init__(
         self,
-        node_weights: torch.Tensor,
+        node_weights: torch.Tensor | dict[torch.Tensor],
         ignore_nans: bool = False,
     ) -> None:
         """Node- and feature_weighted Loss.
@@ -59,7 +59,14 @@ class BaseWeightedLoss(nn.Module, ABC):
         self.avg_function = torch.nanmean if ignore_nans else torch.mean
         self.sum_function = torch.nansum if ignore_nans else torch.sum
 
-        self.register_buffer("node_weights", node_weights, persistent=True)
+        #old 
+        # self.register_buffer("node_weights", node_weights, persistent=True)
+        
+        # edited 
+        if isinstance(node_weights, dict):
+            self.node_weights = node_weights
+        else:
+            self.register_buffer("node_weights", node_weights, persistent=True)
 
     @functools.wraps(ScaleTensor.add_scalar, assigned=("__doc__", "__annotations__"))
     def add_scalar(self, dimension: int | tuple[int], scalar: torch.Tensor, *, name: str | None = None) -> None:
@@ -111,7 +118,7 @@ class BaseWeightedLoss(nn.Module, ABC):
         scalar = scalar.expand_as(x)
         return x[subset_indices] * scalar[subset_indices]
 
-    def scale_by_node_weights(self, x: torch.Tensor, squash: bool = True) -> torch.Tensor:
+    def scale_by_node_weights(self, x: torch.Tensor, graph_label = None, squash: bool = True) -> torch.Tensor:
         """Scale a tensor by the node_weights.
 
         Equivalent to reducing and averaging accordingly across all
@@ -130,18 +137,38 @@ class BaseWeightedLoss(nn.Module, ABC):
         torch.Tensor
             Scaled error tensor
         """
+
+        # NOTICE THE MULTI DOMAIN IS UNDER DEVELOPMENT
+        # THIS FEATURE MAY CHANGE IN THE FUTURE AND OPTIMIZED
+
         # Squash by last dimension
         if squash:
-            x = self.avg_function(x, dim=-1)
-            # Weight by area
-            x *= self.node_weights.expand_as(x)
-            x /= self.sum_function(self.node_weights.expand_as(x))
-            return self.sum_function(x)
+            if not graph_label:
+                x = self.avg_function(x, dim=-1)
+                # Weight by area
+                x *= self.node_weights.expand_as(x)
+                x /= self.sum_function(self.node_weights.expand_as(x))
+                return self.sum_function(x)
+            else:
+                x = self.avg_function(x, dim=-1)
+                # Weight by area
+                x *= self.node_weights[graph_label].expand_as(x)
+                x /= self.sum_function(self.node_weights[graph_label].expand_as(x))
+                return self.sum_function(x)
 
-        # Weight by area, due to weighting construction is analagous to a mean
-        x *= self.node_weights[..., None].expand_as(x)
-        # keep last dimension (variables) when summing weights
-        x /= self.sum_function(self.node_weights[..., None].expand_as(x), dim=(0, 1, 2))
+
+        if not graph_label:
+            # Weight by area, due to weighting construction is analagous to a mean
+            x *= self.node_weights[..., None].expand_as(x)
+            # keep last dimension (variables) when summing weights
+            x /= self.sum_function(self.node_weights[..., None].expand_as(x), dim=(0, 1, 2))
+        else:
+            # multi domain
+
+            # Weight by area, due to weighting construction is analagous to a mean
+            x *= self.node_weights[graph_label][..., None].expand_as(x)
+            # keep last dimension (variables) when summing weights
+            x /= self.sum_function(self.node_weights[graph_label][..., None].expand_as(x), dim=(0, 1, 2))
         return self.sum_function(x, dim=(0, 1, 2))
 
     @abstractmethod
@@ -221,6 +248,7 @@ class FunctionalWeightedLoss(BaseWeightedLoss):
         *,
         scalar_indices: tuple[int, ...] | None = None,
         without_scalars: list[str] | list[int] | None = None,
+        graph_label: str = None,
     ) -> torch.Tensor:
         """Calculates the lat-weighted scaled loss.
 
@@ -247,4 +275,4 @@ class FunctionalWeightedLoss(BaseWeightedLoss):
         out = self.calculate_difference(pred, target)
 
         out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-        return self.scale_by_node_weights(out, squash)
+        return self.scale_by_node_weights(out, squash, graph_label)
