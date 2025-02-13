@@ -455,6 +455,8 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 graph = gc.update_graph(graph)
                 graph = gc.clean(graph)
                 gc.save(graph, graph_filename)
+            # insert graph_label into graph obj
+            graph.label = graph_label
             graph_data_[graph_label] = graph
         return graph_data_
 
