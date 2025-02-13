@@ -24,6 +24,7 @@ from omegaconf import DictConfig
 from omegaconf import OmegaConf
 from pytorch_lightning.profilers import PyTorchProfiler
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
+from torch_geometric.data import HeteroData
 
 from anemoi.training.data.datamodule import AnemoiDatasetsDataModule
 from anemoi.training.diagnostics.callbacks import get_callbacks
@@ -435,11 +436,10 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         """
         graph_data_ = {}
         for graph_label, dataset in self.config.dataloader.datasets.items(): #Has to be a dictionary
-
+            print(graph_label)
             graph_filename = Path(
                 self.config.hardware.paths.graph,
-                graph_label,
-                ".pt",
+                graph_label + ".pt",
             )
 
             if graph_filename.exists() and not self.config.graph.overwrite:
@@ -450,7 +450,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 from anemoi.graphs.nodes import ZarrDatasetNodes
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
-                graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph.attributes.nodes) #empty graph
+                graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph_config.attributes.nodes) #empty graph
                 gc = GraphCreator(config=graph_config)
                 graph = gc.update_graph(graph)
                 graph = gc.clean(graph)
@@ -461,7 +461,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(config: DictConfig) -> None:
-    AnemoiTrainer(config).train()
+    AnemoiMultiDomainTrainer(config).train()
 
 
 if __name__ == "__main__":

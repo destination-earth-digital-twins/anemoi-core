@@ -66,23 +66,28 @@ select:
       - "sin_julian_day"
       - "sin_local_time"
       - "insolation"
-      - "lsm"
+      #- "lsm"
 
 datasets: 
   MEPS:
     cutout:
       - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
         thinning: 25
+        select: ${dataloader.select}
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
+        select: ${dataloader.select}
     adjust: all
-    select: ${dataloader.select}
+    
   ARA:
     cutout:
       - dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
         thinning: 25
+        select: ${dataloader.select}
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
+        select: ${dataloader.select}
     adjust: all
-    select: ${dataloader.select}
+    
+    
 
 training:
   dataset: ${dataloader.datasets}
