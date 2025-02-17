@@ -37,7 +37,7 @@ class AnemoiMultiDomain(nn.Module):
         model_config: DotDict,
         data_indices: dict,
         statistics: dict,
-        graph_data: HeteroData, #None
+        graph_data: dict[HeteroData], #None
     ) -> None:
         """Initializes the graph neural network.
 
@@ -169,9 +169,11 @@ class AnemoiMultiDomain(nn.Module):
             use_reentrant=use_reentrant,
         )
 
-    def forward(self, x: Tensor, graph: HeteroData, model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
+    def forward(self, x: Tensor, graph_label: str, model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
         batch_size = x.shape[0]
         ensemble_size = x.shape[2]
+
+        graph = self._graph_data[graph_label]
 
         # add data positional info (lat/lon)
         x_data_latent = torch.cat(

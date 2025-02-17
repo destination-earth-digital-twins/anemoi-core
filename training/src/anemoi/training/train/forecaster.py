@@ -46,7 +46,7 @@ class GraphForecaster(pl.LightningModule):
         self,
         *,
         config: DictConfig,
-        graph_data: HeteroData,
+        graph_data: dict, #HeteroData,
         statistics: dict,
         data_indices: IndexCollection,
         metadata: dict,
