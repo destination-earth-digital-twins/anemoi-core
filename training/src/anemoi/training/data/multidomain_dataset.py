@@ -31,13 +31,13 @@ if TYPE_CHECKING:
     from anemoi.training.data.grid_indices import BaseGridIndices
 
 
-class NativeGridDataset(IterableDataset):
+class NativeMultiGridDataset(IterableDataset):
     """Iterable dataset for AnemoI data on the arbitrary grids."""
 
     def __init__(
         self,
-        data_reader: Callable,
-        grid_indices: type[BaseGridIndices],
+        data_readers: dict[Callable]
+        grid_indices: dict[type[BaseGridIndices]],
         rollout: int = 1,
         multistep: int = 1,
         timeincrement: int = 1,
@@ -69,7 +69,7 @@ class NativeGridDataset(IterableDataset):
         self.label = label
         self.effective_bs = effective_bs
 
-        self.data = data_reader
+        self.data = data_readers
 
         self.rollout = rollout
         self.timeincrement = timeincrement
@@ -97,32 +97,32 @@ class NativeGridDataset(IterableDataset):
         self.multi_step = multistep
         assert self.multi_step > 0, "Multistep value must be greater than zero."
         self.ensemble_dim: int = 2
-        self.ensemble_size = self.data.shape[self.ensemble_dim]
+        self.ensemble_size = 1 #self.data.shape[self.ensemble_dim]
 
     @cached_property
     def statistics(self) -> dict:
         """Return dataset statistics."""
-        return self.data.statistics
+        return self.data[list(self.data.keys())[0]].statistics
 
     @cached_property
     def metadata(self) -> dict:
         """Return dataset metadata."""
-        return self.data.metadata()
+        return self.data[list(self.data.keys())[0]].metadata()
 
     @cached_property
     def supporting_arrays(self) -> dict:
         """Return dataset supporting_arrays."""
-        return self.data.supporting_arrays()
+        return self.data[list(self.data.keys())[0]].supporting_arrays()
 
     @cached_property
     def name_to_index(self) -> dict:
         """Return dataset statistics."""
-        return self.data.name_to_index
+        return self.data[list(self.data.keys())[0]].name_to_index
 
     @cached_property
     def resolution(self) -> dict:
         """Return dataset resolution."""
-        return self.data.resolution
+        return self.data[list(self.data.keys())[0]].resolution
 
     @cached_property
     def valid_date_indices(self) -> np.ndarray:
@@ -136,7 +136,10 @@ class NativeGridDataset(IterableDataset):
         dataset length minus rollout minus additional multistep inputs
         (if time_increment is 1).
         """
-        return get_usable_indices(self.data.missing, len(self.data), self.rollout, self.multi_step, self.timeincrement)
+        indices = {}
+        for dataset_label, data in self.data.items():
+            indices[dataset_label] = get_usable_indices(data.missing, len(data), self.rollout, self.multi_step, self.timeincrement)
+        return indices
 
     def set_comm_group_info(
         self,
@@ -199,6 +202,7 @@ class NativeGridDataset(IterableDataset):
         self.worker_id = worker_id
 
         # Divide this equally across shards (one shard per group!)
+        # TODO: make separate shard sizes for different datasets
         shard_size = len(self.valid_date_indices) // self.model_comm_num_groups
         shard_start = self.model_comm_group_id * shard_size
         shard_end = (self.model_comm_group_id + 1) * shard_size
@@ -251,13 +255,29 @@ class NativeGridDataset(IterableDataset):
         Currently it receives data with an ensemble dimension, which is discarded for
         now. (Until the code is "ensemble native".)
         """
+
+        # do something smart with the valid_date_indices
+        merged_date_indices = []
+        for dataset_label, valid_date_indices in self.valid_date_indices.items():
+            merged_date_indices.extend(valid_date_indices)
+
+        num_samples = sum([len(v) for v in self.valid_date_indices.values()])
+        sample_dataset = np.concatenate([[k] * len(v) for k, v in self.valid_date_indices.items()])
+        sample_range = list(range(num_samples))
+
         if self.shuffle:
-            shuffled_chunk_indices = self.rng.choice(
-                self.valid_date_indices,
-                size=len(self.valid_date_indices),
+            shuffled_random_indices = self.rng.choice(
+                sample_range,
+                size=num_samples,
                 replace=False,
-            )[self.chunk_index_range]
+            )
+
+            shuffled_chunk_indices = merged_date_indices[shuffled_random_indices]
+
+            # map batch to graph
+            sample_dataset = sample_dataset[shuffled_random_indices]
         else:
+            # TODO: currently assuming shuffling is enabled
             shuffled_chunk_indices = self.valid_date_indices[self.chunk_index_range]
 
         LOGGER.debug(
@@ -275,23 +295,25 @@ class NativeGridDataset(IterableDataset):
         )
 
         for i in shuffled_chunk_indices:
+            dataset_label = sample_dataset[i]
+
             start = i - (self.multi_step - 1) * self.timeincrement
             end = i + (self.rollout + 1) * self.timeincrement
 
             grid_shard_indices = self.grid_indices.get_shard_indices(self.reader_group_rank)
             if isinstance(grid_shard_indices, slice):
                 # Load only shards into CPU memory
-                x = self.data[start : end : self.timeincrement, :, :, grid_shard_indices]
+                x = self.data[dataset_label][start : end : self.timeincrement, :, :, grid_shard_indices]
             else:
                 # Load full grid in CPU memory, select grid_shard after
                 # Note that anemoi-datasets currently doesn't support slicing + indexing
                 # in the same operation.
-                x = self.data[start : end : self.timeincrement, :, :, :]
+                x = self.data[dataset_label][start : end : self.timeincrement, :, :, :]
                 x = x[..., grid_shard_indices]  # select the grid shard
             x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
             self.ensemble_dim = 1
 
-            yield torch.from_numpy(x)
+            yield torch.from_numpy(x), dataset_label
 
     def __repr__(self) -> str:
         return f"""
