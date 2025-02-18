@@ -77,19 +77,21 @@ datasets:
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
         select: ${dataloader.select}
     adjust: all
-    start: null
-    end: null
+    #start: null
+    #end: null
+    min_distance_km: 20
     
   ARA:
     cutout:
       - dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
-        thinning: 25
+        #thinning: 25
         select: ${dataloader.select}
       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
         select: ${dataloader.select}
     adjust: all
-    start: null
-    end: null
+    min_distance_km: 20
+    #start: null
+    #end: null
     
     
 
@@ -98,8 +100,8 @@ datasets:
 
 training:
   dataset: ${dataloader.datasets}
-  #start: null
-  #end: 2020
+  start: null
+  end: 2021
   frequency: ${data.frequency}
   drop:  []
 
