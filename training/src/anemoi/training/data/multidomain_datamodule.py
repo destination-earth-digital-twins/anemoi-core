@@ -22,7 +22,9 @@ from torch.utils.data import DataLoader
 
 from anemoi.datasets.data import open_dataset
 from anemoi.models.data_indices.collection import IndexCollection
-from anemoi.training.data.dataset import NativeGridDataset
+#from anemoi.training.data.dataset import NativeGridDataset
+from anemoi.training.data.multidomain_dataset import NativeMultiGridDataset
+
 from anemoi.training.data.dataset import worker_init_func
 from anemoi.utils.dates import frequency_to_seconds
 
@@ -127,7 +129,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
     @cached_property
     def ds_train(self) -> NativeMultiGridDataset:
-        return self._get_dataset(OmegaConf.to_container(self.config.dataloader.training, resolve=True)
+        return self._get_dataset(OmegaConf.to_container(self.config.dataloader.training, resolve=True),
             label="train",
         )
 
@@ -183,8 +185,10 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         )
 
         data_readers = {}
-        for dataset_label, dataset_config in data_config.items():
-            data_readers[dataset_label] = open_dataset(OmegaConf.to_container(dataset_config, resolve=True))
+        for dataset_label, dataset_config in data_reader["dataset"].items():
+            print(f"this is label: {dataset_label}")
+            print(f"this is conf: {dataset_config}")
+            data_readers[dataset_label] = open_dataset(dataset_config)
         return NativeMultiGridDataset(
             data_readers=data_readers,
             rollout=r,

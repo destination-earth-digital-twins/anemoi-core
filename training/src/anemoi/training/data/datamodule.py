@@ -180,7 +180,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             * self.config.hardware.num_nodes
             // self.config.hardware.num_gpus_per_model
         )
-
+        return NativeGridDataset(
             data_reader=data_readers,
             rollout=r,
             multistep=self.config.training.multistep_input,
@@ -311,7 +311,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
     @cached_property
     def ds_train(self) -> NativeMultiGridDataset:
-        return self._get_dataset(OmegaConf.to_container(self.config.dataloader.training, resolve=True)
+        return self._get_dataset(OmegaConf.to_container(self.config.dataloader.training, resolve=True),
             label="train",
         )
 
@@ -369,7 +369,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         datareaders = {}
         for dataset_label, dataset_config in data_config.items():
             datareaders[dataset_label] = open_dataset(OmegaConf.to_container(dataset_config, resolve=True))
-        return NativeGridDataset(
+            
         return NativeMultiGridDataset(
             data_reader=data_reader,
             rollout=r,
