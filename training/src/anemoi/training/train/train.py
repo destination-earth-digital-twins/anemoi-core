@@ -26,13 +26,21 @@ from pytorch_lightning.profilers import PyTorchProfiler
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from torch_geometric.data import HeteroData
 
-from anemoi.training.data.datamodule import AnemoiDatasetsDataModule
+from anemoi.training.data.datamodule import AnemoiDatasetsDataModule #, AnemoiMultiDomainDataModule
+
+#fix this
+from anemoi.training.data.multidomain_datamodule import AnemoiMultiDomainDataModule
+
 from anemoi.training.diagnostics.callbacks import get_callbacks
 from anemoi.training.diagnostics.logger import get_mlflow_logger
 from anemoi.training.diagnostics.logger import get_tensorboard_logger
 from anemoi.training.diagnostics.logger import get_wandb_logger
 from anemoi.training.distributed.strategy import DDPGroupStrategy
-from anemoi.training.train.forecaster import GraphForecaster
+from anemoi.training.train.forecaster import GraphForecaster 
+
+# fix this (fix the name)
+from anemoi.training.train.mutlidomain_forecaster import MultiDomainGraphForecaster
+
 from anemoi.training.utils.checkpoint import transfer_learning_loading
 from anemoi.training.utils.jsonify import map_config_to_primitives
 from anemoi.training.utils.seeding import get_base_seed
@@ -428,6 +436,38 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         super().__init__(config)
         self.config = config
 
+    def _log_information(self) -> None:
+        # Log number of variables (features)
+        num_fc_features = len(self.datamodule.ds_train.variables) - len(self.config.data.forcing)
+        LOGGER.debug("Total number of prognostic variables: %d", num_fc_features)
+        LOGGER.debug("Total number of auxiliary variables: %d", len(self.config.data.forcing))
+
+        # Log learning rate multiplier when running single-node, multi-GPU and/or multi-node
+        total_number_of_model_instances = (
+            self.config.hardware.num_nodes
+            * self.config.hardware.num_gpus_per_node
+            / self.config.hardware.num_gpus_per_model
+        )
+
+        LOGGER.debug(
+            "Total GPU count / model group size: %d - NB: the learning rate will be scaled by this factor!",
+            total_number_of_model_instances,
+        )
+        LOGGER.debug(
+            "Effective learning rate: %.3e",
+            int(total_number_of_model_instances) * self.config.training.lr.rate,
+        )
+        LOGGER.debug("Rollout window length: %d", self.config.training.rollout.start)
+
+        if self.config.training.max_epochs is not None and self.config.training.max_steps not in (None, -1):
+            LOGGER.info(
+                "Training limits: max_epochs=%d, max_steps=%d. "
+                "Training will stop when either limit is reached first. "
+                "Learning rate scheduler will run for %d steps.",
+                self.config.training.max_epochs,
+                self.config.training.max_steps,
+                self.config.training.lr.iterations,
+            )
     @cached_property
     def graph_data(self) -> HeteroData:
         """Graph data.
@@ -450,6 +490,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 from anemoi.graphs.nodes import ZarrDatasetNodes
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
+                print(f"this is the ds: {dataset}")
                 graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph_config.attributes.nodes) #empty graph
                 gc = GraphCreator(config=graph_config)
                 graph = gc.update_graph(graph)
@@ -459,6 +500,44 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
             graph.label = graph_label
             graph_data_[graph_label] = graph
         return graph_data_
+
+    @cached_property
+    def datamodule(self) -> AnemoiDatasetsDataModule:
+        # TODO: needs hydra instansiate
+        """DataModule instance and DataSets."""
+        datamodule = AnemoiMultiDomainDataModule(self.config, self.graph_data)
+        self.config.data.num_features = len(datamodule.ds_train.variables)
+        LOGGER.info("Number of data variables: %s", str(len(datamodule.ds_train.variables)))
+        LOGGER.debug("Variables: %s", str(datamodule.ds_train.variables))
+        return datamodule
+
+    @cached_property
+    def model(self) -> GraphForecaster:
+        # TODO: needs hydra instansiate
+        """Provide the model instance."""
+        kwargs = {
+            "config": self.config,
+            "data_indices": self.data_indices,
+            "graph_data": self.graph_data,
+            "metadata": self.metadata,
+            "statistics": self.datamodule.statistics,
+            "supporting_arrays": self.supporting_arrays,
+        }
+
+        model = MultiDomainGraphForecaster(**kwargs)
+
+        if self.load_weights_only:
+            # Sanify the checkpoint for transfer learning
+            if self.config.training.transfer_learning:
+                LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
+                return transfer_learning_loading(model, self.last_checkpoint)
+
+            LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
+
+            return MultiDomainGraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
+
+        LOGGER.info("Model initialised from scratch.")
+        return model
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
