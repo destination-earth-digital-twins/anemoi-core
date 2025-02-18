@@ -36,7 +36,7 @@ class NativeMultiGridDataset(IterableDataset):
 
     def __init__(
         self,
-        data_readers: dict[Callable]
+        data_readers: dict[Callable],
         grid_indices: dict[type[BaseGridIndices]],
         rollout: int = 1,
         multistep: int = 1,
@@ -99,6 +99,11 @@ class NativeMultiGridDataset(IterableDataset):
         self.ensemble_dim: int = 2
         self.ensemble_size = 1 #self.data.shape[self.ensemble_dim]
 
+    @cached_property
+    def variables(self) -> dict:
+        """Return dataset variables."""
+        
+        return self.data[list(self.data.keys())[0]].variables
     @cached_property
     def statistics(self) -> dict:
         """Return dataset statistics."""
