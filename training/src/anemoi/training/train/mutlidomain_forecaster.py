@@ -72,7 +72,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         """
         super().__init__()
 
-        graph_data = graph_data.to(self.device) # maybe this should be done in forward
+        self.graph_data = graph_data
+        #graph_data = graph_data.to(self.device) # maybe this should be done in forward
         # send and offload different graph when performing graph switch
         # maybe this can be fixed with dynamics graphs in the feature
 
@@ -120,7 +121,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             # TODO: Not pretty at all, find a better way to do this
             limited_area_mask = {}
             for graph_label, graph in graph_data.items():
-                if graph_data["hidden"].node_type == "StretchedTriNodes":
+                if graph["hidden"].node_type == "StretchedTriNodes":
                     mask_name = config.graph.nodes.hidden.node_builder.mask_attr_name
                     limited_area_mask[graph_label] = graph[config.graph.data][mask_name].squeeze().bool()
                 else:
@@ -198,7 +199,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         self.reader_group_id = 0
         self.reader_group_rank = 0
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: tuple) -> torch.Tensor:
         return self.model(x, self.model_comm_group)
 
     # Future import breaks other type hints TODO Harrison Cook
@@ -254,7 +255,13 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         scalars_to_include = loss_config.pop("scalars", [])
 
         # Instantiate the loss function with the loss_init_config
+        print('kwargs:', kwargs)
+        print(type(kwargs))
+        print(type(kwargs['node_weights']))
+        print('loss_config:', loss_config)
+        #loss_function = WeightedMSELoss(**kwargs) #instantiate(loss_config, **kwargs)
         loss_function = instantiate(loss_config, **kwargs)
+        #loss_function = instantiate(loss_config, node_weights=kwargs['node_weights']['ARA'])
 
         if not isinstance(loss_function, BaseWeightedLoss):
             error_msg = f"Loss must be a subclass of 'BaseWeightedLoss', not {type(loss_function)}"
@@ -428,7 +435,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
     def rollout_step(
         self,
-        batch: torch.Tensor,
+        batch: tuple[torch.Tensor, str],
         rollout: Optional[int] = None,  # noqa: FA100
         training_mode: bool = True,
         validation_mode: bool = False,
@@ -462,14 +469,15 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             None
         """
         # for validation not normalized in-place because remappers cannot be applied in-place
-        batch = self.model.pre_processors(batch, in_place=not validation_mode)
+        batch_data, graph_label = batch
+        batch_data = self.model.pre_processors(batch_data, in_place=not validation_mode)
 
         if not self.updated_loss_mask:
             # update loss scalar after first application and initialization of preprocessors
-            self.training_weights_for_imputed_variables(batch)
+            self.training_weights_for_imputed_variables(batch_data)
 
         # start rollout of preprocessed batch
-        x = batch[
+        x = batch_data[
             :,
             0 : self.multi_step,
             ...,
@@ -483,13 +491,15 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         for rollout_step in range(rollout or self.rollout):
             # prediction at rollout step rollout_step, shape = (bs, latlon, nvar)
-            y_pred = self(x)
+            y_pred = self(x, graph_label)
 
-            y = batch[:, self.multi_step + rollout_step, ..., self.data_indices.internal_data.output.full]
+            y = batch_data[:, self.multi_step + rollout_step, ..., self.data_indices.internal_data.output.full]
             # y includes the auxiliary variables, so we must leave those out when computing the loss
-            loss = checkpoint(self.loss, y_pred, y, use_reentrant=False) if training_mode else None
+            loss = checkpoint(self.loss, y_pred, y, graph_label, use_reentrant=False) if training_mode else None
 
             x = self.advance_input(x, y_pred, batch, rollout_step)
+            # TODO: Check if this makes sense
+            self.graph_data[graph_label].to('cpu')  # offload graph to cpu
 
             metrics_next = {}
             if validation_mode:
@@ -502,19 +512,21 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
     def _step(
         self,
-        batch: torch.Tensor,
+        batch: tuple[torch.Tensor, list],
         batch_idx: int,
         validation_mode: bool = False,
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor]]:
         del batch_idx
-        batch = self.allgather_batch(batch)
 
-        loss = torch.zeros(1, dtype=batch.dtype, device=self.device, requires_grad=False)
+        batch_data, graph_label = batch
+        batch_data = self.allgather_batch(batch)
+
+        loss = torch.zeros(1, dtype=batch_data.dtype, device=self.device, requires_grad=False)
         metrics = {}
         y_preds = []
 
         for loss_next, metrics_next, y_preds_next in self.rollout_step(
-            batch,
+            (batch_data, graph_label),
             rollout=self.rollout,
             training_mode=True,
             validation_mode=validation_mode,
@@ -526,7 +538,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         loss *= 1.0 / self.rollout
         return loss, metrics, y_preds
 
-    def allgather_batch(self, batch: torch.Tensor) -> torch.Tensor:
+    def allgather_batch(self, batch: tuple[torch.Tensor, list]) -> tuple[torch.Tensor, list]:
         """Allgather the batch-shards across the reader group.
 
         Parameters
@@ -539,8 +551,9 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         torch.Tensor
             Allgathered (full) batch
         """
-        batch_data, graph = batch
-        grid_size = len(graph[config.graph.data].x)  # number of points
+        batch_data, graph_label = batch
+        graph = self.graph_data[graph_label]
+        grid_size = len(graph[self.config.graph.data].x)  # number of points
 
         if grid_size == batch_data.shape[-2]:
             return batch_data  # already have the full grid

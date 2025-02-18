@@ -79,7 +79,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
     @cached_property
     def supporting_arrays(self) -> dict:
-        return self.ds_train.supporting_arrays | self.grid_indices.supporting_arrays
+        return self.ds_train.supporting_arrays | self.grid_indices[list(self.grid_indices.keys())[0]].supporting_arrays
 
     @cached_property
     def data_indices(self) -> IndexCollection:

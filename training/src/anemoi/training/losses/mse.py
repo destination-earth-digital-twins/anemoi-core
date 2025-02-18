@@ -15,6 +15,7 @@ import logging
 import torch
 
 from anemoi.training.losses.weightedloss import BaseWeightedLoss
+from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class WeightedMSELoss(BaseWeightedLoss):
 
     def __init__(
         self,
-        node_weights: torch.Tensor,
+        node_weights: dict,
         ignore_nans: bool = False,
         **kwargs,
     ) -> None:

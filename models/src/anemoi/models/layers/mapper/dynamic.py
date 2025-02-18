@@ -23,6 +23,7 @@ from anemoi.models.layers.block import GraphTransformerMapperBlock
 from anemoi.models.layers.mapper.base import BackwardMapperPostProcessMixin
 from anemoi.models.layers.mapper.base import BaseMapper
 from anemoi.models.layers.mapper.base import ForwardMapperPreProcessMixin
+from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
 
     def __init__(
         self,
+        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -88,6 +90,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
             hidden_dim,
             mlp_hidden_ratio * hidden_dim,
             hidden_dim,
+            layer_kernels=layer_kernels,
             num_heads=num_heads,
             edge_dim=edge_dim,
             activation=activation,
@@ -145,6 +148,7 @@ class DynamicGraphTransformerForwardMapper(
 
     def __init__(
         self,
+        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -190,6 +194,7 @@ class DynamicGraphTransformerForwardMapper(
             in_channels_src,
             in_channels_dst,
             hidden_dim,
+            layer_kernels=layer_kernels,
             out_channels_dst=out_channels_dst,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
             sub_graph_edge_index_name=sub_graph_edge_index_name,
@@ -224,6 +229,7 @@ class DynamicGraphTransformerBackwardMapper(
 
     def __init__(
         self,
+        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -269,6 +275,7 @@ class DynamicGraphTransformerBackwardMapper(
             in_channels_src,
             in_channels_dst,
             hidden_dim,
+            layer_kernels=layer_kernels,
             out_channels_dst=out_channels_dst,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
             sub_graph_edge_index_name=sub_graph_edge_index_name,

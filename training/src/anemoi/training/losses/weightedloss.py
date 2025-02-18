@@ -30,7 +30,7 @@ class BaseWeightedLoss(nn.Module, ABC):
 
     def __init__(
         self,
-        node_weights: torch.Tensor | dict[torch.Tensor],
+        node_weights: dict, #torch.Tensor | dict[torch.Tensor],
         ignore_nans: bool = False,
     ) -> None:
         """Node- and feature_weighted Loss.
@@ -64,7 +64,7 @@ class BaseWeightedLoss(nn.Module, ABC):
         
         # edited 
         if isinstance(node_weights, dict):
-            self.node_weights = node_weights
+            self.node_weights = node_weights#['node_weights']
         else:
             self.register_buffer("node_weights", node_weights, persistent=True)
 

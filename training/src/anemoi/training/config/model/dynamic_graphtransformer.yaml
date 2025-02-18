@@ -17,7 +17,7 @@ layer_kernels:
       #Any arguments to your chosen function go here e.g.
 
 processor:
-  _target_: anemoi.models.layers.processor.DynamicGraphTransformerProcessor
+  _target_: anemoi.models.layers.processor.dynamic.DynamicGraphTransformerProcessor
   _convert_: all
   activation: ${model.activation}
   trainable_size: ${model.trainable_parameters.hidden2hidden}
@@ -30,7 +30,7 @@ processor:
   edge_dim: ${model.edge_dim} #Hardcoded: 2 from the edge_dir dimensions + 1 from the edge_length
 
 encoder:
-  _target_: anemoi.models.layers.mapper.DynamicGraphTransformerForwardMapper
+  _target_: anemoi.models.layers.mapper.dynamic.DynamicGraphTransformerForwardMapper
   _convert_: all
   trainable_size: ${model.trainable_parameters.data2hidden}
   sub_graph_edge_attributes: ${model.attributes.edges}
@@ -41,7 +41,7 @@ encoder:
   edge_dim: ${model.edge_dim} #Hardcoded: 2 from the edge_dir dimensions + 1 from the edge_length
 
 decoder:
-  _target_: anemoi.models.layers.mapper.DynamicGraphTransformerBackwardMapper
+  _target_: anemoi.models.layers.mapper.dynamic.DynamicGraphTransformerBackwardMapper
   _convert_: all
   trainable_size: ${model.trainable_parameters.hidden2data}
   sub_graph_edge_attributes: ${model.attributes.edges}

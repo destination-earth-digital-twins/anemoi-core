@@ -64,7 +64,7 @@ class AnemoiMultiDomain(nn.Module):
         self.multi_step = model_config.training.multistep_input
         self.num_channels = model_config.model.num_channels
 
-        node_dim = self.model_config.model.node_dim #Should inherit from config
+        node_dim = model_config.model.node_dim #Should inherit from config
         input_dim = self.multi_step * self.num_input_channels + node_dim
 
         # read config.model.layer_kernels to get the implementation for certain layers
@@ -72,28 +72,28 @@ class AnemoiMultiDomain(nn.Module):
 
         # Encoder data -> hidden
         self.encoder = instantiate(
+            self.layer_kernels,
             model_config.model.encoder,
             in_channels_src=input_dim,
             in_channels_dst=node_dim,
             hidden_dim=self.num_channels,
-            layer_kernels=self.layer_kernels,
         )
 
         # Processor hidden -> hidden
         self.processor = instantiate(
+            self.layer_kernels,
             model_config.model.processor,
             num_channels=self.num_channels,
-            layer_kernels=self.layer_kernels,
         )
 
         # Decoder hidden -> data
         self.decoder = instantiate(
+            self.layer_kernels,
             model_config.model.decoder,
             in_channels_src=self.num_channels,
             in_channels_dst=input_dim,
             hidden_dim=self.num_channels,
             out_channels_dst=self.num_output_channels,
-            layer_kernels=self.layer_kernels,
         )
 
         # Instantiation of model output bounding functions (e.g., to ensure outputs like TP are positive definite)
@@ -174,6 +174,7 @@ class AnemoiMultiDomain(nn.Module):
         ensemble_size = x.shape[2]
 
         graph = self._graph_data[graph_label]
+        graph = graph.to(x.device)
 
         # add data positional info (lat/lon)
         x_data_latent = torch.cat(
