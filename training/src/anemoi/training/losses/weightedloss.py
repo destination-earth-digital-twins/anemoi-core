@@ -17,7 +17,7 @@ from abc import abstractmethod
 
 import torch
 from torch import nn
-
+from omegaconf import OmegaConf
 from anemoi.training.losses.utils import ScaleTensor
 
 LOGGER = logging.getLogger(__name__)
