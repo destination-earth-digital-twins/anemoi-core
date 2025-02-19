@@ -27,7 +27,7 @@ class WeightedMSELoss(BaseWeightedLoss):
 
     def __init__(
         self,
-        node_weights: dict,
+        node_weights: torch.Tensor | dict[torch.Tensor],
         ignore_nans: bool = False,
         **kwargs,
     ) -> None:

@@ -30,7 +30,7 @@ class BaseWeightedLoss(nn.Module, ABC):
 
     def __init__(
         self,
-        node_weights: dict, #torch.Tensor | dict[torch.Tensor],
+        node_weights: torch.Tensor | dict[torch.tensor],
         ignore_nans: bool = False,
     ) -> None:
         """Node- and feature_weighted Loss.
@@ -53,21 +53,23 @@ class BaseWeightedLoss(nn.Module, ABC):
 
         """
         super().__init__()
-
+        print(node_weights, "inside bwsme", type(node_weights))
         self.scalar = ScaleTensor()
 
         self.avg_function = torch.nanmean if ignore_nans else torch.mean
         self.sum_function = torch.nansum if ignore_nans else torch.sum
 
         #old 
-        # self.register_buffer("node_weights", node_weights, persistent=True)
+        #self.register_buffer("node_weights", node_weights, persistent=True)
         
         # edited 
-        if isinstance(node_weights, dict):
-            self.node_weights = node_weights#['node_weights']
-        else:
+        if isinstance(node_weights, torch.Tensor):
             self.register_buffer("node_weights", node_weights, persistent=True)
-
+            self.node_weights = node_weights
+        else:
+            node_weights = OmegaConf.to_container(node_weights, resolve=True)
+            self.node_weights = node_weights
+            
     @functools.wraps(ScaleTensor.add_scalar, assigned=("__doc__", "__annotations__"))
     def add_scalar(self, dimension: int | tuple[int], scalar: torch.Tensor, *, name: str | None = None) -> None:
         self.scalar.add_scalar(dimension=dimension, scalar=scalar, name=name)
