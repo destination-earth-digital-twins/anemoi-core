@@ -102,13 +102,21 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         #self.latlons_data = graph_data[config.graph.data].x
 
         # TODO: ish fixed, maybe optimize later :)
-        self.node_weights={}
-        for graph_label, graph in graph_data.items():
-            self.node_weights[graph_label] = self.get_node_weights(config, graph)
-            self.node_weights[graph_label] = self.output_mask.apply(
-                self.node_weights[graph_label], 
+        if isinstance(graph_data, dict):
+            self.node_weights={}
+            for graph_label, graph in graph_data.items():
+                self.node_weights[graph_label] = self.get_node_weights(config, graph)
+                self.node_weights[graph_label] = self.output_mask.apply(
+                    self.node_weights[graph_label], 
+                    dim=0, fill_value=0.0
+                    )
+        else:
+            self.node_weights = self.get_node_weights(config, graph_data)
+            self.node_weights = self.output_mask.apply(
+                self.node_weights, 
                 dim=0, fill_value=0.0
                 )
+
 
         self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
 
@@ -255,13 +263,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         scalars_to_include = loss_config.pop("scalars", [])
 
         # Instantiate the loss function with the loss_init_config
-        print('kwargs:', kwargs)
-        print(type(kwargs))
-        print(type(kwargs['node_weights']))
-        print('loss_config:', loss_config)
-        #loss_function = WeightedMSELoss(**kwargs) #instantiate(loss_config, **kwargs)
         loss_function = instantiate(loss_config, **kwargs)
-        #loss_function = instantiate(loss_config, node_weights=kwargs['node_weights']['ARA'])
 
         if not isinstance(loss_function, BaseWeightedLoss):
             error_msg = f"Loss must be a subclass of 'BaseWeightedLoss', not {type(loss_function)}"
