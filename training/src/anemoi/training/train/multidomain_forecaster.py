@@ -93,7 +93,6 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             graph_data=graph_data,
             config=DotDict(map_config_to_primitives(OmegaConf.to_container(config, resolve=True))),
         )
-        print("model after init in forecaster ", self.model.state_dict())
         self.config = config
         self.data_indices = data_indices
 
@@ -150,7 +149,6 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                 }
 
         # Kwargs to pass to the loss function
-        self.node_weights = None
         loss_kwargs = {"node_weights": self.node_weights}
         
         self.updated_loss_mask = False
