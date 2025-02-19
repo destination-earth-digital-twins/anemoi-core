@@ -22,7 +22,7 @@ from anemoi.models.layers.chunk import GNNProcessorChunk
 from anemoi.models.layers.chunk import GraphTransformerProcessorChunk
 from anemoi.models.layers.chunk import TransformerProcessorChunk
 from anemoi.models.layers.graph import TrainableTensor
-from anemoi.models.layers.mapper.base import GraphEdgeMixin
+from anemoi.models.layers.mapper.static import GraphEdgeMixin
 from anemoi.models.layers.processor.base import BaseProcessor
 from anemoi.utils.config import DotDict
 

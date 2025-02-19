@@ -20,19 +20,17 @@ from anemoi.models.distributed.shapes import change_channels_in_shape
 from anemoi.models.distributed.shapes import get_shape_shards
 from anemoi.models.layers.chunk import GraphTransformerProcessorChunk
 from anemoi.models.layers.graph import TrainableTensor
-from anemoi.models.layers.mapper.base import GraphEdgeMixin
 from anemoi.models.layers.processor.base import BaseProcessor
 from anemoi.utils.config import DotDict
 
 
-class DynamicGraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
+class DynamicGraphTransformerProcessor(BaseProcessor):
     """Processor."""
 
     def __init__(
         self,
         num_layers: int,
-        layer_kernels: DotDict,
-        trainable_size: int = 8,
+        trainable_size: int = 0,
         num_channels: int = 128,
         num_chunks: int = 2,
         num_heads: int = 16,
@@ -41,6 +39,8 @@ class DynamicGraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         cpu_offload: bool = False,
         sub_graph_edge_index_name: str = "edge_index",
         sub_graph_edge_attributes: Optional[list] = [],
+        layer_kernels: DotDict = None,
+        edge_dim: int = 0,
         **kwargs,
     ) -> None:
         """Initialize DynamicGraphTransformerProcessor.
@@ -74,10 +74,10 @@ class DynamicGraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         self.edge_attribute_names = sub_graph_edge_attributes
         self.edge_index_name = sub_graph_edge_index_name
 
-        self.trainable = TrainableTensor(
-            trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0]
-        )
-
+        # Removed trainable parameters, since we don't use them with dynamic input
+        # self.trainable = TrainableTensor(
+        #     trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0]
+        # ) 
         self.build_layers(
             GraphTransformerProcessorChunk,
             num_channels=num_channels,
@@ -86,7 +86,7 @@ class DynamicGraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
             num_heads=num_heads,
             mlp_hidden_ratio=mlp_hidden_ratio,
             activation=activation,
-            edge_dim=self.edge_dim,
+            edge_dim=edge_dim,
         )
 
         self.offload_layers(cpu_offload)

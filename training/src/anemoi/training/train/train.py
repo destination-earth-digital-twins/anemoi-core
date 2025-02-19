@@ -38,9 +38,7 @@ from anemoi.training.diagnostics.logger import get_wandb_logger
 from anemoi.training.distributed.strategy import DDPGroupStrategy
 from anemoi.training.train.forecaster import GraphForecaster 
 
-# fix this (fix the name)
-from anemoi.training.train.mutlidomain_forecaster import MultiDomainGraphForecaster
-
+from anemoi.training.train.multidomain_forecaster import MultiDomainGraphForecaster
 from anemoi.training.utils.checkpoint import transfer_learning_loading
 from anemoi.training.utils.jsonify import map_config_to_primitives
 from anemoi.training.utils.seeding import get_base_seed
@@ -502,7 +500,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         return graph_data_
 
     @cached_property
-    def datamodule(self) -> AnemoiDatasetsDataModule:
+    def datamodule(self) -> AnemoiMultiDomainDataModule:
         # TODO: needs hydra instansiate
         """DataModule instance and DataSets."""
         datamodule = AnemoiMultiDomainDataModule(self.config, self.graph_data)
@@ -512,7 +510,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         return datamodule
 
     @cached_property
-    def model(self) -> GraphForecaster:
+    def model(self) -> MultiDomainGraphForecaster:
         # TODO: needs hydra instansiate
         """Provide the model instance."""
         kwargs = {
@@ -525,7 +523,6 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         }
 
         model = MultiDomainGraphForecaster(**kwargs)
-
         if self.load_weights_only:
             # Sanify the checkpoint for transfer learning
             if self.config.training.transfer_learning:

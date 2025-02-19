@@ -33,7 +33,6 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
 
     def __init__(
         self,
-        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -46,6 +45,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         num_heads: int = 16,
         mlp_hidden_ratio: int = 4,
         edge_dim: int = 0,
+        layer_kernels: DotDict = None,
     ) -> None:
         """Initialize DynamicGraphTransformerBaseMapper.
 
@@ -148,7 +148,6 @@ class DynamicGraphTransformerForwardMapper(
 
     def __init__(
         self,
-        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -161,6 +160,7 @@ class DynamicGraphTransformerForwardMapper(
         num_heads: int = 16,
         mlp_hidden_ratio: int = 4,
         edge_dim: int = 0,
+        layer_kernels: DotDict = None,
         **kwargs,
     ) -> None:
         """Initialize DynamicGraphTransformerForwardMapper.
@@ -194,7 +194,6 @@ class DynamicGraphTransformerForwardMapper(
             in_channels_src,
             in_channels_dst,
             hidden_dim,
-            layer_kernels=layer_kernels,
             out_channels_dst=out_channels_dst,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
             sub_graph_edge_index_name=sub_graph_edge_index_name,
@@ -204,6 +203,7 @@ class DynamicGraphTransformerForwardMapper(
             num_heads=num_heads,
             mlp_hidden_ratio=mlp_hidden_ratio,
             edge_dim=edge_dim,
+            layer_kernels=layer_kernels,
         )
 
         self.emb_nodes_src = nn.Identity()
@@ -229,7 +229,6 @@ class DynamicGraphTransformerBackwardMapper(
 
     def __init__(
         self,
-        layer_kernels: DotDict,
         in_channels_src: int = 0,
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
@@ -242,6 +241,7 @@ class DynamicGraphTransformerBackwardMapper(
         num_heads: int = 16,
         mlp_hidden_ratio: int = 4,
         edge_dim: int = 0,
+        layer_kernels: DotDict = None,
         **kwargs,
     ) -> None:
         """Initialize DynamicGraphTransformerBackwardMapper.
@@ -275,7 +275,6 @@ class DynamicGraphTransformerBackwardMapper(
             in_channels_src,
             in_channels_dst,
             hidden_dim,
-            layer_kernels=layer_kernels,
             out_channels_dst=out_channels_dst,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
             sub_graph_edge_index_name=sub_graph_edge_index_name,
@@ -285,6 +284,7 @@ class DynamicGraphTransformerBackwardMapper(
             num_heads=num_heads,
             mlp_hidden_ratio=mlp_hidden_ratio,
             edge_dim=edge_dim,
+            layer_kernels=layer_kernels,
         )
 
         self.node_data_extractor = nn.Sequential(
