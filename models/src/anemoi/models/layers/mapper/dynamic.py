@@ -23,6 +23,7 @@ from anemoi.models.layers.block import GraphTransformerMapperBlock
 from anemoi.models.layers.mapper.base import BackwardMapperPostProcessMixin
 from anemoi.models.layers.mapper.base import BaseMapper
 from anemoi.models.layers.mapper.base import ForwardMapperPreProcessMixin
+from anemoi.models.layers.mlp import MLP
 from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
@@ -90,20 +91,22 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
             hidden_dim,
             mlp_hidden_ratio * hidden_dim,
             hidden_dim,
-            layer_kernels=layer_kernels,
             num_heads=num_heads,
             edge_dim=edge_dim,
             activation=activation,
             num_chunks=num_chunks,
+            layer_kernels=layer_kernels,
         )
 
         self.offload_layers(cpu_offload)
-
-        self.emb_nodes_dst = (
+        # idst 4, h 128, 
+        """self.emb_nodes_dst = (
             nn.Linear(self.in_channels_dst, self.hidden_dim)
             if self.in_channels_dst != self.hidden_dim
             else nn.Identity()
-        )
+        )"""
+        Linear = layer_kernels["Linear"]
+        self.emb_nodes_dst = Linear(self.in_channels_dst, self.hidden_dim)
 
     def forward(
         self,
@@ -113,6 +116,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         shard_shapes: tuple[tuple[int], tuple[int]],
         model_comm_group: Optional[ProcessGroup] = None,
     ) -> PairTensor:
+        #print("inside dynamic basemapper, subgraph",sub_graph.device )
         size = (sum(x[0] for x in shard_shapes[0]), sum(x[0] for x in shard_shapes[1]))
         edge_index = sub_graph[self.edge_index_name].to(torch.int64)
         edge_attr = torch.cat(
@@ -206,7 +210,8 @@ class DynamicGraphTransformerForwardMapper(
             layer_kernels=layer_kernels,
         )
 
-        self.emb_nodes_src = nn.Identity()
+        #self.emb_nodes_src = nn.Identity()
+        self.emb_nodes_src = layer_kernels["Linear"](self.in_channels_src, self.hidden_dim)
 
     def forward(
         self,
