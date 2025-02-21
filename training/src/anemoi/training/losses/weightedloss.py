@@ -68,6 +68,7 @@ class BaseWeightedLoss(nn.Module, ABC):
             self.node_weights = node_weights
         else:
             node_weights = OmegaConf.to_container(node_weights, resolve=True)
+            print("node_weights", node_weights)
             self.node_weights = node_weights
             
     @functools.wraps(ScaleTensor.add_scalar, assigned=("__doc__", "__annotations__"))
@@ -144,6 +145,7 @@ class BaseWeightedLoss(nn.Module, ABC):
         # THIS FEATURE MAY CHANGE IN THE FUTURE AND OPTIMIZED
 
         # Squash by last dimension
+        print("scale", graph_label, not graph_label)
         if squash:
             if not graph_label:
                 x = self.avg_function(x, dim=-1)
@@ -154,8 +156,10 @@ class BaseWeightedLoss(nn.Module, ABC):
             else:
                 x = self.avg_function(x, dim=-1)
                 # Weight by area
+                self.node_weights[graph_label] = self.node_weights[graph_label].to(x.device)
                 x *= self.node_weights[graph_label].expand_as(x)
                 x /= self.sum_function(self.node_weights[graph_label].expand_as(x))
+                self.node_weights[graph_label] = self.node_weights[graph_label].to("cpu")
                 return self.sum_function(x)
 
 
@@ -166,11 +170,14 @@ class BaseWeightedLoss(nn.Module, ABC):
             x /= self.sum_function(self.node_weights[..., None].expand_as(x), dim=(0, 1, 2))
         else:
             # multi domain
-
+            print("graph_label", graph_label)
+            print("inside loss scale nodes",x.device, x.dtype, self.node_weights[graph_label].dtype, self.node_weights[graph_label].device)
             # Weight by area, due to weighting construction is analagous to a mean
+            self.node_weights[graph_label] = self.node_weights[graph_label].to(x.device) # tmp solution
             x *= self.node_weights[graph_label][..., None].expand_as(x)
             # keep last dimension (variables) when summing weights
             x /= self.sum_function(self.node_weights[graph_label][..., None].expand_as(x), dim=(0, 1, 2))
+            self.node_weights[graph_label] = self.node_weights[graph_label].to("cpu") #offload to cpu
         return self.sum_function(x, dim=(0, 1, 2))
 
     @abstractmethod
@@ -178,6 +185,7 @@ class BaseWeightedLoss(nn.Module, ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
+        graph_label: str = None,
         squash: bool = True,
         *,
         scalar_indices: tuple[int, ...] | None = None,
@@ -207,8 +215,7 @@ class BaseWeightedLoss(nn.Module, ABC):
         out = pred - target
 
         out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-
-        return self.scale_by_node_weights(out, squash)
+        return self.scale_by_node_weights(out, graph_label, squash)
 
     @property
     def name(self) -> str:
@@ -246,11 +253,11 @@ class FunctionalWeightedLoss(BaseWeightedLoss):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
+        graph_label: str = None,
         squash: bool = True,
         *,
         scalar_indices: tuple[int, ...] | None = None,
         without_scalars: list[str] | list[int] | None = None,
-        graph_label: str = None,
     ) -> torch.Tensor:
         """Calculates the lat-weighted scaled loss.
 
@@ -277,4 +284,4 @@ class FunctionalWeightedLoss(BaseWeightedLoss):
         out = self.calculate_difference(pred, target)
 
         out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-        return self.scale_by_node_weights(out, squash, graph_label)
+        return self.scale_by_node_weights(out, graph_label,squash)
