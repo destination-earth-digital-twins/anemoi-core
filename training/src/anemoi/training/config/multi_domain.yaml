@@ -24,6 +24,6 @@ model:
 dataloader:
   limit_batches:
     training: 100
-    validation: 100
+    validation: 0 #100
 training:
   max_epochs: 5
