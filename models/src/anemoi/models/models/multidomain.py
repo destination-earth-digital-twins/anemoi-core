@@ -66,15 +66,15 @@ class AnemoiMultiDomain(nn.Module):
 
         node_dim = model_config.model.node_dim #Should inherit from config
         input_dim = self.multi_step * self.num_input_channels + node_dim
-
+        
         # read config.model.layer_kernels to get the implementation for certain layers
         self.layer_kernels = load_layer_kernels(model_config.get("model.layer_kernels", {}))
 
         # Encoder data -> hidden
         self.encoder = instantiate(
             model_config.model.encoder,
-            in_channels_src=input_dim,
-            in_channels_dst=node_dim,
+            in_channels_src=input_dim, #258 -> (128*2 + 2)
+            in_channels_dst=node_dim, # 4
             hidden_dim=self.num_channels,
             layer_kernels=self.layer_kernels,
         )
@@ -133,6 +133,7 @@ class AnemoiMultiDomain(nn.Module):
         self,
         mapper: nn.Module,
         data: tuple[Tensor],
+        sub_graph: HeteroData,
         batch_size: int,
         shard_shapes: tuple[tuple[int, int], tuple[int, int]],
         model_comm_group: Optional[ProcessGroup] = None,
@@ -164,6 +165,7 @@ class AnemoiMultiDomain(nn.Module):
         return checkpoint(
             mapper,
             data,
+            sub_graph=sub_graph,
             batch_size=batch_size,
             shard_shapes=shard_shapes,
             model_comm_group=model_comm_group,
@@ -175,17 +177,20 @@ class AnemoiMultiDomain(nn.Module):
         ensemble_size = x.shape[2]
 
         graph = self._graph_data[graph_label]
-        graph = graph.to(x.device)
-
+        graph = graph.to(x.device) # this is done recurisvely under the hood
+        #print("inside forware multidomain", graph.device)
         # add data positional info (lat/lon)
+        print("x shape", x.shape)
         x_data_latent = torch.cat(
             (
                 einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
-                torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)]),
+                torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)],dim=-1),
             ),
             dim=-1,  # feature dimension
         )
-        x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)]) #hidden hardcoded, should pass as argument
+        # 538692 24 4 -> 538692 28
+        print("x_data_latent", x_data_latent.shape)
+        x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim=-1) #hidden hardcoded, should pass as argument
         # Might want to change to reading lat/lons from buffer
 
         # get shard shapes
