@@ -466,6 +466,10 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 self.config.training.max_steps,
                 self.config.training.lr.iterations,
             )
+    
+    @cached_property
+    def get_processed_configs(self):
+        pass 
     @cached_property
     def graph_data(self) -> HeteroData:
         """Graph data.
@@ -473,13 +477,14 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         Creates the graph in all workers.
         """
         graph_data_ = {}
+        # for graph_label, dataset in self.get_processed_configs
         for graph_label, dataset in self.config.dataloader.datasets.items(): #Has to be a dictionary
             print(graph_label)
             graph_filename = Path(
                 self.config.hardware.paths.graph,
                 graph_label + ".pt",
             )
-
+            # True False -> False
             if graph_filename.exists() and not self.config.graph.overwrite:
                 LOGGER.info("Loading graph data from %s", graph_filename)
                 graph = torch.load(graph_filename)
@@ -493,6 +498,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 gc = GraphCreator(config=graph_config)
                 graph = gc.update_graph(graph)
                 graph = gc.clean(graph)
+                # TODO: check if the graphs gets updated
                 gc.save(graph, graph_filename)
             # insert graph_label into graph obj
             graph.label = graph_label
