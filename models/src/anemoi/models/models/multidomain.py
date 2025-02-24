@@ -184,13 +184,11 @@ class AnemoiMultiDomain(nn.Module):
         x_data_latent = torch.cat(
             (
                 einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
-                torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)],dim=-1),
+                torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)], dim = -1),
             ),
             dim=-1,  # feature dimension
         )
-        # 538692 24 4 -> 538692 28
-        print("x_data_latent", x_data_latent.shape)
-        x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim=-1) #hidden hardcoded, should pass as argument
+        x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim = -1) #hidden hardcoded, should pass as argument
         # Might want to change to reading lat/lons from buffer
 
         # get shard shapes

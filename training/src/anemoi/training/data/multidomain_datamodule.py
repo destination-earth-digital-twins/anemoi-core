@@ -196,12 +196,12 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
         data_readers = {}
         #dataset = data_reader.pop("dataset")
-        for dataset_label, dataset_config in data_reader.items():
+        for dataset_label, dataset_config in data_reader["dataset"].items():
             print(f"this is label: {dataset_label}")
             print(f"this is conf: {dataset_config}")
             #_dataset_config = {"dataset": dataset_config, "start": data_reader["start"], "end": data_reader["end"]}
             #dataset_config.update(data_reader)
-            data_readers[dataset_label] = open_dataset(_dataset_config)
+            data_readers[dataset_label] = open_dataset(dataset_config)
 
         
         print("inside get_ds fn", shuffle)

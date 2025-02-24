@@ -266,7 +266,7 @@ class NativeMultiGridDataset(IterableDataset):
         merged_date_indices = []
         for dataset_label, valid_date_indices in self.valid_date_indices.items():
             merged_date_indices.extend(valid_date_indices)
-
+        print("merged date indices ", merged_date_indices)
         num_samples = len(merged_date_indices) #sum([len(v) for v in merged_date_indices])
         sample_dataset = np.concatenate([[k] * len(v) for k, v in self.valid_date_indices.items()])
         print("len", len(sample_dataset),sample_dataset[0], sample_dataset)
@@ -309,9 +309,10 @@ class NativeMultiGridDataset(IterableDataset):
             shuffled_chunk_indices[:10],
         )
 
-        for i in shuffled_chunk_indices:
+        for num, i in enumerate(shuffled_chunk_indices):
             print("i = ", i)
-            dataset_label = sample_dataset[i]
+            print("num = ", num)
+            dataset_label = sample_dataset[num]
             print("dataset label inside for loop", dataset_label)
             # 2, 1, 50 50
             # 49

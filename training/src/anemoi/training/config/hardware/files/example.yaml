@@ -1,6 +1,6 @@
 #dataset: aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr
 dataset: aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
-#graph: ???
+graph: None
 checkpoint:
   every_n_epochs: anemoi-by_epoch-epoch_{epoch:03d}-step_{step:06d}
   every_n_train_steps: anemoi-by_step-epoch_{epoch:03d}-step_{step:06d}
