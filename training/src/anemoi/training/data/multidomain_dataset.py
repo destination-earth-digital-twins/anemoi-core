@@ -92,7 +92,7 @@ class NativeMultiGridDataset(IterableDataset):
         self.n_samples_per_worker = 0
         self.chunk_index_range: np.ndarray | None = None
         self.shuffle = shuffle  
-        print("inside __init__ mutli ds", self.shuffle)
+        # print("inside __init__ mutli ds", self.shuffle)
 
         # Data dimensions
         self.multi_step = multistep
@@ -146,7 +146,19 @@ class NativeMultiGridDataset(IterableDataset):
         for dataset_label, data in self.data.items():
             indices[dataset_label] = get_usable_indices(data.missing, len(data), self.rollout, self.multi_step, self.timeincrement)
         return indices
+    
+    @cached_property
+    def merged_date_indices(self) -> np.ndarray:
+        """Return merged date indices for working with multiple datasets.
 
+        The valid date indices are merged together.
+        """
+        # do something smart with the valid_date_indices
+        merged_date_indices = []
+        for dataset_label, valid_date_indices in self.valid_date_indices.items():
+            merged_date_indices.extend(valid_date_indices)
+        return np.array(merged_date_indices)
+    
     def set_comm_group_info(
         self,
         global_rank: int,
@@ -206,18 +218,23 @@ class NativeMultiGridDataset(IterableDataset):
 
         """
         self.worker_id = worker_id
-
+        # print("worker ID ", self.worker_id)
         # Divide this equally across shards (one shard per group!)
         # TODO: make separate shard sizes for different datasets
-        shard_size = len(self.valid_date_indices) // self.model_comm_num_groups
+        # shard_size = len(self.valid_date_indices) // self.model_comm_num_groups
+        shard_size = len(self.merged_date_indices) // self.model_comm_num_groups
+        # print("shard size ", shard_size)
         shard_start = self.model_comm_group_id * shard_size
         shard_end = (self.model_comm_group_id + 1) * shard_size
-
+        # print("start - end ", shard_start, shard_end)
         shard_len = shard_end - shard_start
+        # print("shard length ", shard_len)
         self.n_samples_per_worker = shard_len // n_workers
+        # print("samples per worker ", self.n_samples_per_worker)
 
         low = shard_start + worker_id * self.n_samples_per_worker
         high = min(shard_start + (worker_id + 1) * self.n_samples_per_worker, shard_end)
+        # print("low - high ", low, high)
         self.chunk_index_range = np.arange(low, high, dtype=np.uint32)
 
         LOGGER.debug(
@@ -262,39 +279,33 @@ class NativeMultiGridDataset(IterableDataset):
         now. (Until the code is "ensemble native".)
         """
 
-        # do something smart with the valid_date_indices
-        merged_date_indices = []
-        for dataset_label, valid_date_indices in self.valid_date_indices.items():
-            merged_date_indices.extend(valid_date_indices)
-        print("merged date indices ", merged_date_indices)
-        num_samples = len(merged_date_indices) #sum([len(v) for v in merged_date_indices])
-        sample_dataset = np.concatenate([[k] * len(v) for k, v in self.valid_date_indices.items()])
-        print("len", len(sample_dataset),sample_dataset[0], sample_dataset)
-        sample_range = list(range(num_samples))
         # TODO: make this more elegant in some way :)
-        merged_date_indices = np.array(merged_date_indices)
+        num_samples = len(self.merged_date_indices) #sum([len(v) for v in merged_date_indices])
+        sample_dataset = np.concatenate([[k] * len(v) for k, v in self.valid_date_indices.items()])
+        # print("len", len(sample_dataset),sample_dataset[0], sample_dataset)
+        sample_range = list(range(num_samples))
         #print("inside __iter__", self.shuffle)
-        
+        # print("chunk index range ", self.chunk_index_range, len(self.chunk_index_range))
         if self.shuffle:
             shuffled_random_indices = self.rng.choice(
                 sample_range,
                 size=num_samples,
                 replace=False,
             )
-            print("shuffled_random_indices", shuffled_random_indices, type(shuffled_random_indices), shuffled_random_indices.dtype) # np.ndarray
+            # print("shuffled_random_indices", shuffled_random_indices, len(shuffled_random_indices)) # np.ndarray
             #print("merged_date_indices", merged_date_indices, type(merged_date_indices))
-            shuffled_chunk_indices = merged_date_indices[shuffled_random_indices]
-            print("shuffled_chunk_indices", shuffled_chunk_indices, type(shuffled_chunk_indices))
+            shuffled_chunk_indices = self.merged_date_indices[shuffled_random_indices][self.chunk_index_range]
+            # print("shuffled_chunk_indices", shuffled_chunk_indices, len(shuffled_chunk_indices))
             # map batch to graph
-            sample_dataset = sample_dataset[shuffled_random_indices]
-            print("after shufle. sample_Ds", sample_dataset)
+            sample_dataset = sample_dataset[shuffled_random_indices][self.chunk_index_range]
+            # print("after shufle. sample_Ds", sample_dataset, len(sample_dataset))
         else:
             # TODO: currently assuming shuffling is enabled
             # TODO: FIX THIS, WE DONT WANT TO USE next(iter(...))
             #print(self.valid_date_indices, type(self.valid_date_indices))
             #shuffled_chunk_indices = self.valid_date_indices[next(iter(list(self.valid_date_indices.keys())))][self.chunk_index_range]
-            shuffled_chunk_indices = merged_date_indices[self.chunk_index_range]
-            
+            shuffled_chunk_indices = self.merged_date_indices[self.chunk_index_range]
+
         LOGGER.debug(
             (
                 "Worker pid %d, label %s, worker id %d, global_rank %d, "
@@ -310,21 +321,18 @@ class NativeMultiGridDataset(IterableDataset):
         )
 
         for num, i in enumerate(shuffled_chunk_indices):
-            print("i = ", i)
-            print("num = ", num)
+            # print("i = ", i)
+            # print("num = ", num)
             dataset_label = sample_dataset[num]
-            print("dataset label inside for loop", dataset_label)
-            # 2, 1, 50 50
-            # 49
-            # 51
+            # print("dataset label inside for loop", dataset_label)
             start = i - (self.multi_step - 1) * self.timeincrement
             end = i + (self.rollout + 1) * self.timeincrement
 
             grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
-            print(grid_shard_indices)
+            # print(grid_shard_indices)
             if isinstance(grid_shard_indices, slice):
                 # Load only shards into CPU memory
-                print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
+                # print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
                 x = self.data[dataset_label][start : end : self.timeincrement, :, :, grid_shard_indices]
             else:
                 # Load full grid in CPU memory, select grid_shard after
