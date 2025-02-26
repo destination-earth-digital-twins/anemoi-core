@@ -46,7 +46,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         self,
         *,
         config: DictConfig,
-        graph_data: HeteroData,
+        graph_data: Union[dict[HeteroData], HeteroData],
         statistics: dict,
         data_indices: IndexCollection,
         metadata: dict,
@@ -98,67 +98,24 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         self.save_hyperparameters()
 
-
-        #self.latlons_data = graph_data[config.graph.data].x
-
-        # TODO: ish fixed, maybe optimize later :)
-        if isinstance(graph_data, dict):
-            self.node_weights={}
-            for graph_label, graph in graph_data.items():
-                #tmp = self.get_node_weights(config, graph)
-                #print("DEVICE", self.device)
-                #tmp = tmp.to(self.device) # maybe not the best solution, but tmp solution
-                self.node_weights[graph_label] = self.get_node_weights(config, graph)
-                self.node_weights[graph_label] = self.output_mask.apply(
-                    self.node_weights[graph_label], 
-                    dim=0, fill_value=0.0
-                    )
-        else:
-            self.node_weights = self.get_node_weights(config, graph_data)
-            self.node_weights = self.output_mask.apply(
-                self.node_weights, 
-                dim=0, fill_value=0.0
-                )
-            self.node_weights.to(self.device)
-
-
         self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
 
         variable_scaling = self.get_variable_scaling(config, data_indices)
 
         self.internal_metric_ranges, self.val_metric_ranges = self.get_val_metric_ranges(config, data_indices)
 
-        # Check if the model is a stretched grid
-        if isinstance(graph_data, dict):
-            # TODO: Not pretty at all, find a better way to do this
-            limited_area_mask = {}
-            for graph_label, graph in graph_data.items():
-                if graph["hidden"].node_type == "StretchedTriNodes":
-                    mask_name = config.graph.nodes.hidden.node_builder.mask_attr_name
-                    limited_area_mask[graph_label] = graph[config.graph.data][mask_name].squeeze().bool()
-                else:
-                    limited_area_mask[graph_label] = torch.ones((1,))
-                
-            self.scalars = {
-                "variable": (-1, variable_scaling),
-                "loss_weights_mask": ((-2, -1), torch.ones((1, 1))),
-                "limited_area_mask": tuple([(2, lam) for label, lam in limited_area_mask.items()]),
-            }
-        else:
-            if graph_data["hidden"].node_type == "StretchedTriNodes":
-                mask_name = config.graph.nodes.hidden.node_builder.mask_attr_name
-                limited_area_mask = graph_data[config.graph.data][mask_name].squeeze().bool()
-            else:
-                limited_area_mask = torch.ones((1,))
-                # Scalars to include in the loss function, must be of form (dim, scalar)
-                # Use -1 for the variable dimension, -2 for the latlon dimension
-                # Add mask multiplying NaN locations with zero. At this stage at [[1]].
-                # Filled after first application of preprocessor. dimension=[-2, -1] (latlon, n_outputs).
-                self.scalars = {
-                    "variable": (-1, variable_scaling),
-                    "loss_weights_mask": ((-2, -1), torch.ones((1, 1))),
-                    "limited_area_mask": (2, limited_area_mask),
-                }
+        limited_area_mask, self.node_weights = self.get_loss_kwargs(config, graph_data)
+
+        # Scalars to include in the loss function, must be of form (dim, scalar)
+        # Use -1 for the variable dimension, -2 for the latlon dimension
+        # Add mask multiplying NaN locations with zero. At this stage at [[1]].
+        # Filled after first application of preprocessor. dimension=[-2, -1] (latlon, n_outputs).
+
+        self.scalars = {
+            "variable": (-1, variable_scaling),
+            "loss_weights_mask": ((-2, -1), torch.ones((1, 1))),
+            "limited_area_mask": limited_area_mask,
+        }
 
         # Kwargs to pass to the loss function
         loss_kwargs = {"node_weights": self.node_weights}
@@ -214,6 +171,74 @@ class MultiDomainGraphForecaster(pl.LightningModule):
     def forward(self, x: torch.Tensor, graph_label: str) -> torch.Tensor:
         return self.model(x,graph_label, self.model_comm_group)
 
+    def get_loss_kwargs(
+        self,
+        config: DictConfig,
+        graph_data: Union[HeteroData, dict[HeteroData]],
+    ) -> tuple[tuple, Union[dict, torch.Tensor]]:
+        """Get stretched grid limited area mask and node weights from config 
+
+        Parameters
+        ----------
+        config : DictConfig
+            Limited area graph mask configuration, should include mask_attr_name if node_type is "StretchedTriNodes"
+        graph_data: Union[HeteroData, dict[HeteroData]]
+            Graph data can be a dictionary of graphs or a single graph
+        
+        Returns
+        -------
+        tuple, the limited area mask in the shape required (dim, scalar)
+
+        """
+
+        if isinstance(graph_data, dict):
+            limited_area_mask = {}
+            self.node_weights={}
+            for graph_label, graph in graph_data.items():
+                limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
+                self.node_weights[graph_label] = self.get_node_weights(config, graph)
+                self.node_weights[graph_label] = self.output_mask.apply(
+                    self.node_weights[graph_label], 
+                    dim=0, fill_value=0.0
+                    )
+            return tuple([(2, lam) for label, lam in limited_area_mask.items()]), self.node_weights
+        else:
+            limited_area_mask = self.get_limited_area_mask(config, graph_data)
+            self.node_weights = self.get_node_weights(config, graph_data)
+            self.node_weights = self.output_mask.apply(
+                self.node_weights, 
+                dim=0, fill_value=0.0
+                )
+            self.node_weights.to(self.device)
+            return (2, limited_area_mask), self.node_weights
+        
+    @staticmethod
+    def get_limited_area_mask(
+        config: DictConfig, 
+        graph: HeteroData
+    ) -> torch.Tensor:
+        
+        """Get stretched grid limited area mask from config
+
+        Parameters
+        ----------
+        config : DictConfig
+            Limited area graph mask configuration, should include mask_attr_name if node_type is "StretchedTriNodes"
+        graph_data: Union[HeteroData, dict[HeteroData]]
+            Graph data has to be a single graph
+        
+        Returns
+        -------
+        torch.Tensor, the limited area mask required
+
+        """
+
+        if graph["hidden"].node_type == "StretchedTriNodes":
+            mask_name = config.graph.nodes.hidden.node_builder.mask_attr_name
+            return graph[config.graph.data][mask_name].squeeze().bool()
+        else:
+            return torch.ones((1,))
+    
     # Future import breaks other type hints TODO Harrison Cook
     @staticmethod
     def get_loss_function(
