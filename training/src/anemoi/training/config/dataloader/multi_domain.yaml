@@ -68,61 +68,63 @@ select:
       - "insolation"
       #- "lsm"
 #new
-# training_periods:
-#   MEPS:
-#     start: 2020-02-05 
-#     end: 2023-05-31
-#   ARA:
-#     start: 2012-01-01
-#     end: 2016-12-31
-
-#new
-# validation_periods:
-#   MEPS:
-#     start: 2023-06-01
-#     end: 2024-05-31
-#   ARA:
-#     start: 2017-01-01
-#     end: 2017-12-31
-
-#new
-# regional_datasets:
-#   MEPS: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-#   ARA: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
-
-#new
-# datasets:
-#   cutout:
-#     - dataset: null 
-#     - dataset: global
-#   adjust: all
-
-datasets: 
+training_periods:
   MEPS:
-    cutout:
-      - dataset: null #/pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-        thinning: 25
-        select: ${dataloader.select}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset}
-        select: ${dataloader.select}
-    adjust: "all" #all
-    #reorder: sort
-    #start: null
-    #end: null
-    min_distance_km: 20
-    
+    start: 2020-02-05 
+    end: 2023-05-31
   ARA:
-    cutout:
-      - dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
-        #thinning: 25
-        select: ${dataloader.select}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset}
-        select: ${dataloader.select}
-    adjust: "all" #all
-    #reorder: sort
-    min_distance_km: 20
-    #start: null
-    #end: null
+    start: 2012-01-01
+    end: 2016-12-31
+
+#new
+validation_periods:
+  MEPS:
+    start: 2023-06-01
+    end: 2024-05-31
+  ARA:
+    start: 2017-01-01
+    end: 2017-12-31
+
+#new
+regional_datasets:
+  MEPS: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
+  ARA: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
+
+#new
+datasets:
+  cutout:
+    - dataset: null 
+      thinning: 25
+    - dataset: ${hardware.paths.data}/${hardware.files.dataset}
+      select: ${dataloader.select}
+  adjust: all
+
+# datasets: 
+#   MEPS:
+#     cutout:
+#       - dataset: null #/pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
+#         thinning: 25
+#         select: ${dataloader.select}
+#       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
+#         select: ${dataloader.select}
+#     adjust: "all" #all
+#     #reorder: sort
+#     #start: null
+#     #end: null
+#     min_distance_km: 20
+    
+#   ARA:
+#     cutout:
+#       - dataset: pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20181231-3h-v7.zarr
+#         #thinning: 25
+#         select: ${dataloader.select}
+#       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
+#         select: ${dataloader.select}
+#     adjust: "all" #all
+#     #reorder: sort
+#     min_distance_km: 20
+#     #start: null
+#     #end: null
     
 
 
@@ -135,10 +137,10 @@ training:
   #period: ${training_periods} #null # <- dict of of train periods
   
   # old
-  start: null
-  end: 2020
-  frequency: ${data.frequency}
-  drop:  []
+  start: null # inject start date in pre-process
+  end: null # inject end date in pre-process
+  #frequency: ${data.frequency}
+  #drop:  []
 
 validation_rollout: 1 # number of rollouts to use for validation, must be equal or greater than rollout expected by callbacks
 
@@ -146,13 +148,13 @@ validation:
   dataset: ${dataloader.datasets}
   #new
   #period: ${validation_periods} #null # <- dict of of train periods
-  start: 2021
-  end: 2021
-  frequency: ${data.frequency}
-  drop:  []
+  start: null # inject start date in pre-process
+  end: null # inject end date in pre-process
+  #frequency: ${data.frequency}
+  #drop:  []
 
 test:
   dataset: ${dataloader.datasets}
   start: 2022
   end: null
-  frequency: ${data.frequency}
+  #frequency: ${data.frequency}

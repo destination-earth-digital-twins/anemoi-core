@@ -431,8 +431,15 @@ class AnemoiTrainer:
 class AnemoiMultiDomainTrainer(AnemoiTrainer):
     """Utility class for training the model."""
     def __init__(self, config):
-        super().__init__(config)
         self.config = config
+        self.config = self.get_processed_configs
+        exit()
+        super().__init__(config)
+
+        # process configs with multiple domains 
+        # and train/validation periods
+        self.get_processed_configs
+        self._log_information()
 
     def _log_information(self) -> None:
         # Log number of variables (features)
@@ -469,7 +476,21 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
     
     @cached_property
     def get_processed_configs(self):
-        pass 
+        modify_config = OmegaConf.to_container(self.config, resolve=True) 
+        print(modify_config["dataloader"]["training"])
+        # dataloader.training
+        print(modify_config["dataloader"]["datasets"])
+        print(modify_config["dataloader"]["validation_periods"])
+        print(modify_config["dataloader"]["training_periods"])
+        print(type(modify_config)) # <- dict 
+
+
+        from anemoi.training.utils.process_config import ProcessConfigs
+        ProcessConfigs(self.config).combine
+        # validation
+        # train
+        exit()
+
     @cached_property
     def graph_data(self) -> HeteroData:
         """Graph data.
