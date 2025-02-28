@@ -13,15 +13,15 @@ pin_memory: True
 read_group_size: ${hardware.num_gpus_per_model}
 
 num_workers:
-  training: 1
+  training: 2
   validation: 1
-  test: 8
-  predict: 8
+  test: 1
+  predict: 1
 batch_size:
   training: 1 # generalize to higher batches what? -> bs > 2: graph_label [ARA,ARA] should only be ARA
-  validation: 1
-  test: 4
-  predict: 4
+  validation: 0
+  test: 1
+  predict: 1
 
 # ============
 # Default effective batch_size for training is 16
@@ -85,7 +85,7 @@ validation_periods:
     start: 2017-01-01
     end: 2017-12-31
 
-#new
+# new
 regional_datasets:
   MEPS: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
   ARA: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20171231-3h-v4.zarr
@@ -94,29 +94,28 @@ regional_datasets:
 datasets:
   cutout:
     - dataset: null 
-      thinning: 25
+      select: ${dataloader.select}
     - dataset: ${hardware.paths.data}/${hardware.files.dataset}
       select: ${dataloader.select}
-  adjust: all
+  adjust: ["frequency, dates"]
 
 # datasets: 
 #   MEPS:
 #     cutout:
-#       - dataset: null #/pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-#         thinning: 25
+#       - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
 #         select: ${dataloader.select}
 #       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
 #         select: ${dataloader.select}
 #     adjust: "all" #all
-#     #reorder: sort
-#     #start: null
-#     #end: null
+#     # reorder: sort
+#     # start: null
+#     # end: null
+#     statistics: ${hardware.paths.data}/${hardware.files.dataset}
 #     min_distance_km: 20
     
 #   ARA:
 #     cutout:
-#       - dataset: pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20181231-3h-v7.zarr
-#         #thinning: 25
+#       - dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20181231-3h-v7.zarr
 #         select: ${dataloader.select}
 #       - dataset: ${hardware.paths.data}/${hardware.files.dataset}
 #         select: ${dataloader.select}
