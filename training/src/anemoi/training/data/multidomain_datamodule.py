@@ -57,14 +57,16 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
             if self.config.training.rollout.epoch_increment > 0
             else self.config.training.rollout.start
         )
-
-        # Set the training end date if not specified
-        if self.config.dataloader.training.end is None:
-            LOGGER.info(
-                "No end date specified for training data, setting default before validation start date %s.",
-                self.config.dataloader.validation.start - 1,
-            )
-            self.config.dataloader.training.end = self.config.dataloader.validation.start - 1
+        
+        resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
+        for dataset_label, dataset in resolved_training_conf.items():
+            # Set the training end date if not specified
+            if dataset["end"] is None:
+                LOGGER.info(
+                   f"No end date specified for {dataset_label} training data, setting default before validation start date %s.",
+                    dataset["start"] - 1,
+                )
+                self.config.dataloader.training.end = dataset["start"] - 1
 
         if not self.config.dataloader.get("pin_memory", True):
             LOGGER.info("Data loader memory pinning disabled.")
@@ -196,7 +198,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
         data_readers = {}
         #dataset = data_reader.pop("dataset")
-        for dataset_label, dataset_config in data_reader["dataset"].items():
+        for dataset_label, dataset_config in data_reader.items():
             print(f"this is label: {dataset_label}")
             print(f"this is conf: {dataset_config}")
             #_dataset_config = {"dataset": dataset_config, "start": data_reader["start"], "end": data_reader["end"]}
@@ -204,7 +206,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
             data_readers[dataset_label] = open_dataset(dataset_config)
 
         
-        print("inside get_ds fn", shuffle)
+        # print("inside get_ds fn", shuffle)
         return NativeMultiGridDataset(
             data_readers=data_readers,
             rollout=r,

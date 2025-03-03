@@ -387,7 +387,6 @@ class AnemoiTrainer:
     def train(self) -> None:
         """Training entry point."""
         LOGGER.debug("Setting up trainer..")
-
         trainer = pl.Trainer(
             accelerator=self.accelerator,
             callbacks=self.callbacks,
@@ -432,13 +431,11 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
     """Utility class for training the model."""
     def __init__(self, config):
         self.config = config
-        self.config = self.get_processed_configs
-        exit()
+        config = self.get_processed_configs
         super().__init__(config)
 
         # process configs with multiple domains 
         # and train/validation periods
-        self.get_processed_configs
         self._log_information()
 
     def _log_information(self) -> None:
@@ -477,19 +474,11 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
     @cached_property
     def get_processed_configs(self):
         modify_config = OmegaConf.to_container(self.config, resolve=True) 
-        print(modify_config["dataloader"]["training"])
-        # dataloader.training
-        print(modify_config["dataloader"]["datasets"])
-        print(modify_config["dataloader"]["validation_periods"])
-        print(modify_config["dataloader"]["training_periods"])
-        print(type(modify_config)) # <- dict 
-
 
         from anemoi.training.utils.process_config import ProcessConfigs
-        ProcessConfigs(self.config).combine
+        return ProcessConfigs(self.config).combine
         # validation
         # train
-        exit()
 
     @cached_property
     def graph_data(self) -> HeteroData:
@@ -499,7 +488,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         """
         graph_data_ = {}
         # for graph_label, dataset in self.get_processed_configs
-        for graph_label, dataset in self.config.dataloader.datasets.items(): #Has to be a dictionary
+        for graph_label, dataset in self.config.dataloader.training.items(): #Has to be a dictionary
             print(graph_label)
             graph_filename = Path(
                 self.config.hardware.paths.graph,

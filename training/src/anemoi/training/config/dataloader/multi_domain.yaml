@@ -97,7 +97,7 @@ datasets:
       select: ${dataloader.select}
     - dataset: ${hardware.paths.data}/${hardware.files.dataset}
       select: ${dataloader.select}
-  adjust: ["frequency, dates"]
+  adjust: ["frequency", "dates"]
 
 # datasets: 
 #   MEPS:
