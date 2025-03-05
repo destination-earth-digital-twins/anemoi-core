@@ -59,14 +59,14 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         )
         
         resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
-        for dataset_label, dataset in resolved_training_conf.items():
+        for dataset_label in resolved_training_conf:
             # Set the training end date if not specified
-            if dataset["end"] is None:
+            if resolved_training_conf[dataset_label]["end"] is None:
                 LOGGER.info(
                    f"No end date specified for {dataset_label} training data, setting default before validation start date %s.",
-                    dataset["start"] - 1,
+                    resolved_training_conf[dataset_label]["start"] - 1,
                 )
-                self.config.dataloader.training.end = dataset["start"] - 1
+                self.config.dataloader.training.end = resolved_training_conf[dataset_label]["start"] - 1
 
         if not self.config.dataloader.get("pin_memory", True):
             LOGGER.info("Data loader memory pinning disabled.")
@@ -147,13 +147,15 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
     @cached_property
     def ds_valid(self) -> NativeMultiGridDataset:
         r = max(self.rollout, self.config.dataloader.get("validation_rollout", 1))
-
-        if not self.config.dataloader.training.end < self.config.dataloader.validation.start:
-            LOGGER.warning(
-                "Training end date %s is not before validation start date %s.",
-                self.config.dataloader.training.end,
-                self.config.dataloader.validation.start,
-            )
+        resolved_dataloader_conf = OmegaConf.to_container(self.config.dataloader, resolve = True)
+        for dataset_label in resolved_dataloader_conf["training"]:
+            if not resolved_dataloader_conf["training"][dataset_label]["end"] < resolved_dataloader_conf["validation"][dataset_label]["start"]:
+                LOGGER.warning(
+                    "Training end date %s is not before validation start date %s for dataset %s.",
+                    self.config.dataloader.training.end,
+                    self.config.dataloader.validation.start,
+                    dataset_label,
+                )
         return self._get_dataset(
             #open_dataset(
             OmegaConf.to_container(self.config.dataloader.validation, resolve=True),
