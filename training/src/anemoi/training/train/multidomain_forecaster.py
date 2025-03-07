@@ -79,17 +79,19 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         #TODO: create a check for checking if dict is non-empty
 
-        if config.model.get("output_mask", None) is not None:
-            self.output_mask = Boolean1DMask(graph_data[config.graph.data][config.model.output_mask])
-        else:
-            self.output_mask = NoOutputMask()
+        limited_area_mask, self.node_weights, self.output_mask = self.get_loss_kwargs(config, graph_data)
+
+        # if config.model.get("output_mask", None) is not None:
+        #     self.output_mask = Boolean1DMask(graph_data[config.graph.data][config.model.output_mask])
+        # else:
+        #     self.output_mask = NoOutputMask()
 
         # OK 
         self.model = AnemoiModelInterface(
             statistics=statistics,
             data_indices=data_indices,
             metadata=metadata,
-            supporting_arrays=supporting_arrays | self.output_mask.supporting_arrays,
+            supporting_arrays=supporting_arrays | self.output_mask[list(self.output_mask.keys())[0]].supporting_arrays,
             graph_data=graph_data,
             config=DotDict(map_config_to_primitives(OmegaConf.to_container(config, resolve=True))),
         )
@@ -104,7 +106,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         self.internal_metric_ranges, self.val_metric_ranges = self.get_val_metric_ranges(config, data_indices)
 
-        limited_area_mask, self.node_weights = self.get_loss_kwargs(config, graph_data)
+        
 
         # Scalars to include in the loss function, must be of form (dim, scalar)
         # Use -1 for the variable dimension, -2 for the latlon dimension
@@ -175,7 +177,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         self,
         config: DictConfig,
         graph_data: Union[HeteroData, dict[HeteroData]],
-    ) -> tuple[tuple, Union[dict, torch.Tensor]]:
+    ) -> tuple[tuple, Union[dict, torch.Tensor], dict]:
         """Get stretched grid limited area mask and node weights from config 
 
         Parameters
@@ -194,23 +196,26 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         if isinstance(graph_data, dict):
             limited_area_mask = {}
             self.node_weights={}
+            self.output_mask={}
             for graph_label, graph in graph_data.items():
                 limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
                 self.node_weights[graph_label] = self.get_node_weights(config, graph)
-                self.node_weights[graph_label] = self.output_mask.apply(
+                self.output_mask[graph_label] = Boolean1DMask(graph[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
+                self.node_weights[graph_label] = self.output_mask[graph_label].apply(
                     self.node_weights[graph_label], 
                     dim=0, fill_value=0.0
                     )
-            return tuple([(2, lam) for label, lam in limited_area_mask.items()]), self.node_weights
+            return tuple([(2, lam) for label, lam in limited_area_mask.items()]), self.node_weights, self.output_mask
         else:
             limited_area_mask = self.get_limited_area_mask(config, graph_data)
             self.node_weights = self.get_node_weights(config, graph_data)
+            self.output_mask = Boolean1DMask(graph_data[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
             self.node_weights = self.output_mask.apply(
                 self.node_weights, 
                 dim=0, fill_value=0.0
                 )
             self.node_weights.to(self.device)
-            return (2, limited_area_mask), self.node_weights
+            return (2, limited_area_mask), self.node_weights, self.output_mask
         
     @staticmethod
     def get_limited_area_mask(
@@ -445,17 +450,17 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         rollout_step: int,
     ) -> torch.Tensor:
         x = x.roll(-1, dims=1)
-
+        batch_data, graph_label = batch
         # Get prognostic variables
         x[:, -1, :, :, self.data_indices.internal_model.input.prognostic] = y_pred[
             ...,
             self.data_indices.internal_model.output.prognostic,
         ]
 
-        x[:, -1] = self.output_mask.rollout_boundary(x[:, -1], batch[:, -1], self.data_indices)
+        x[:, -1] = self.output_mask[graph_label].rollout_boundary(x[:, -1], batch_data[:, -1], self.data_indices)
 
         # get new "constants" needed for time-varying fields
-        x[:, -1, :, :, self.data_indices.internal_model.input.forcing] = batch[
+        x[:, -1, :, :, self.data_indices.internal_model.input.forcing] = batch_data[
             :,
             self.multi_step + rollout_step,
             :,
@@ -530,7 +535,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             print(graph_label)
             loss = checkpoint(self.loss, y_pred, y, graph_label, use_reentrant=False) if training_mode else None
 
-            x = self.advance_input(x, y_pred, batch_data, rollout_step)
+            x = self.advance_input(x, y_pred, batch, rollout_step)
             # TODO: Check if this makes sense
             #self.graph_data[graph_label].to('cpu')  # offload graph to cpu
 
@@ -586,10 +591,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             Allgathered (full) batch
         """
         batch_data, graph_label = batch
-        print(graph_label, type(graph_label), type(batch), type(self.graph_data))
         graph = self.graph_data[graph_label[0]]
         grid_size = len(graph[self.config.graph.data].x)  # number of points
-
         if grid_size == batch_data.shape[-2]:
             return batch_data  # already have the full grid
 
@@ -604,7 +607,6 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         tensor_list = [torch.empty(tuple(shard_shape), device=self.device) for _ in range(self.reader_group_size - 1)]
         tensor_list.append(torch.empty(last_shard_shape, device=self.device))
-
         torch.distributed.all_gather(
             tensor_list,
             batch_data,
@@ -642,14 +644,13 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         for metric in self.metrics:
             metric_name = getattr(metric, "name", metric.__class__.__name__.lower())
-
             if not isinstance(metric, BaseWeightedLoss):
                 # If not a weighted loss, we cannot feature scale, so call normally
                 metrics[f"{metric_name}/{rollout_step + 1}"] = metric(
                     y_pred_postprocessed,
                     y_postprocessed,
                     graph_label,
-                )
+                ).to(self.device)
                 continue
 
             for mkey, indices in self.val_metric_ranges.items():
@@ -669,7 +670,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                             y,
                             graph_label,
                             scalar_indices=[..., internal_model_indices],
-                        )
+                        ).to(self.device)
                 else:
                     if -1 in metric.scalar:
                         exception_msg = (
@@ -684,7 +685,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                         y_postprocessed,
                         graph_label,
                         scalar_indices=[..., indices],
-                    )
+                    ).to(self.device)
 
         return metrics
 
@@ -763,15 +764,17 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         )
 
         for mname, mvalue in metrics.items():
+            # Log metrics without averaging
             self.log(
-                "val_" + mname,
-                mvalue,
-                on_epoch=True,
-                on_step=False,
+                "val_" + mname + "_step",
+                mvalue[~mvalue.isnan()],
+                on_epoch=False,
+                on_step=True,
                 prog_bar=False,
                 logger=self.logger_enabled,
                 batch_size=batch_data.shape[0],
-                sync_dist=True,
+                sync_dist=False,
+                reduce_fx="mean",
             )
 
         return val_loss, y_preds
