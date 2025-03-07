@@ -58,4 +58,4 @@ class MultiDomainMSELoss(WeightedMSELoss):
         without_scalars: list[str] | list[int] | None = None,
     ) -> torch.Tensor:
         graph_label = str(graph_label)
-        return super().forward(pred, target, graph_label, squash, scalar_indices, without_scalars) if self.loss_name == graph_label else torch.Tensor([float.nan])
+        return super().forward(pred, target, graph_label, squash, scalar_indices, without_scalars) if self.loss_name == graph_label else torch.tensor((float('nan')))

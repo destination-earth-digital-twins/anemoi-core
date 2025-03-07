@@ -82,5 +82,4 @@ class WeightedMSELoss(BaseWeightedLoss):
 
         out = torch.square(pred - target)
         out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-        print("forward", graph_label)
         return self.scale_by_node_weights(out, graph_label, squash)

@@ -767,15 +767,30 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             # Log metrics without averaging
             self.log(
                 "val_" + mname + "_step",
-                mvalue[~mvalue.isnan()],
+                mvalue,
+                # mvalue[~mvalue.isnan()],
                 on_epoch=False,
                 on_step=True,
                 prog_bar=False,
                 logger=self.logger_enabled,
                 batch_size=batch_data.shape[0],
-                sync_dist=False,
+                sync_dist=True,
                 reduce_fx="mean",
             )
+
+            # Log metrics with averaging (ignoring nans)
+            if not mvalue.isnan():
+                self.log(
+                    "val_" + mname + "_epoch",
+                    mvalue,
+                    on_epoch=True,
+                    on_step=False,
+                    prog_bar=False,
+                    logger=self.logger_enabled,
+                    batch_size=batch_data.shape[0],
+                    sync_dist=True,
+                    reduce_fx="mean",
+                )
 
         return val_loss, y_preds
 
