@@ -147,20 +147,7 @@ class NativeMultiGridDataset(IterableDataset):
         for dataset_label, data in self.data.items():
             indices[dataset_label] = get_usable_indices(data.missing, len(data), self.rollout, self.multi_step, self.timeincrement)
         return indices
-    
-    @cached_property
-    def num_samples(self) -> np.ndarray:
-        """Return merged date indices for working with multiple datasets.
 
-        The valid date indices are merged together.
-        """ 
-        print("are we in training mode? ", self.shuffle)
-        print("self valid date indices ", self.valid_date_indices.keys())
-        print("self valid date indices ", [len(v) for v in self.valid_date_indices.values()])
-        print("num samples ", sum([len(v)//self.effective_bs for v in self.valid_date_indices.values()]))
-        return sum([len(v)//self.effective_bs for v in self.valid_date_indices.values()])
-    
-    
     def set_comm_group_info(
         self,
         global_rank: int,
@@ -282,14 +269,8 @@ class NativeMultiGridDataset(IterableDataset):
         Currently it receives data with an ensemble dimension, which is discarded for
         now. (Until the code is "ensemble native".)
         """
-        print("effective batch size ", self.effective_bs)  #TODO: pass as an argument/property
-        reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*2], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
-        validation_date_indices = np.array(list(interleave(list(reshaped_date_indices))))
         sample_dataset = [[k] * (len(v)//self.effective_bs) for k, v in self.valid_date_indices.items()]
-        # sample_range = list(range(self.num_samples)) #TODO: better way to ensure that sample range <= num_samples//self.effective_bs and size <= num_samples//self.effective_bs
-        
-        # print("sample range ", len(sample_range)
-        print("self valid date indices inside __init__", [len(v) for v in self.valid_date_indices.values()])
+
         if self.shuffle:
             shuffled_random_indices = []
             for dataset_label, v in self.valid_date_indices.items():
@@ -306,11 +287,14 @@ class NativeMultiGridDataset(IterableDataset):
             )
             shuffled_chunk_indices = shuffled_random_indices[merged_random_indices, :][self.chunk_index_range, :] 
 
-            # map batch to graph (idea: rename this to shuffled_dataset_labels)
+            # map batch to graph 
             sample_dataset = np.concatenate(sample_dataset)[merged_random_indices][self.chunk_index_range]
         else:
-            # TODO: make sure validation batches have the same graph (rn assuming batch size = 1)
+            reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
+            validation_date_indices = np.array(list(interleave(list(reshaped_date_indices))))
             shuffled_chunk_indices = validation_date_indices[self.chunk_index_range]
+            
+            # map batch to graph 
             sample_dataset = np.array(list(interleave(sample_dataset)))
             sample_dataset = sample_dataset[self.chunk_index_range]
 
@@ -335,8 +319,6 @@ class NativeMultiGridDataset(IterableDataset):
                     i = batch[batch_idx]
                 else:
                     i = batch
-        
-              
                 start = i - (self.multi_step - 1) * self.timeincrement
                 end = i + (self.rollout + 1) * self.timeincrement
                 grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
