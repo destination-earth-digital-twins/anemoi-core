@@ -14,19 +14,20 @@ import logging
 
 import torch
 
-from anemoi.training.losses.mse import WeightedMSELoss
+from anemoi.training.losses.limitedarea import WeightedMSELossLimitedArea
 from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
 
 
-class MultiDomainMSELoss(WeightedMSELoss):
+class MultiDomainMSELoss(WeightedMSELossLimitedArea):
     
-
     def __init__(
         self,
         loss_name: str,
         node_weights: torch.Tensor | dict[torch.Tensor],
+        inside_lam: bool = True,
+        wmse_contribution: bool = False,
         ignore_nans: bool = False,
         **kwargs,
     ) -> None:
@@ -42,20 +43,30 @@ class MultiDomainMSELoss(WeightedMSELoss):
         """ 
         super().__init__(
             node_weights=node_weights,
+            inside_lam=inside_lam,
+            wmse_contribution=wmse_contribution,
             ignore_nans=ignore_nans,
             **kwargs,
         )
         self.loss_name = loss_name
         self.name = f"multidomain_wmse_{loss_name}"
+        # initialize previous
+        self.previous = {}
     
     def forward(
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
         graph_label: str = None, 
+        var_name: str = None,
         squash: bool = True,
         scalar_indices: tuple[int, ...] | None = None,
-        without_scalars: list[str] | list[int] | None = None,
+        # without_scalars: list[str] | list[int] | None = None,
     ) -> torch.Tensor:
         graph_label = str(graph_label)
-        return super().forward(pred, target, graph_label, squash, scalar_indices, without_scalars) if self.loss_name == graph_label else torch.tensor((float('nan')))
+
+        if self.loss_name == graph_label:
+            self.previous[var_name] = super().forward(pred, target, graph_label, squash, scalar_indices) 
+
+        # return super().forward(pred, target, graph_label, squash, scalar_indices, without_scalars) if self.loss_name == graph_label else torch.tensor((float('nan')))
+        return self.previous[var_name] if var_name in self.previous else torch.tensor((float('nan'))).to(pred.device)

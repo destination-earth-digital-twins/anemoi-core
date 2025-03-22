@@ -32,7 +32,7 @@ import torch
 from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.utilities import rank_zero_only
 
-from anemoi.models.layers.mapper import GraphEdgeMixin
+from anemoi.models.layers.mapper.static import GraphEdgeMixin
 from anemoi.training.diagnostics.plots import get_scatter_frame
 from anemoi.training.diagnostics.plots import init_plot_settings
 from anemoi.training.diagnostics.plots import plot_graph_edge_features
@@ -407,6 +407,7 @@ class LongRolloutPlots(BasePlotCallback):
         start_time = time.time()
         logger = trainer.logger
 
+        print("batch ", batch)
         # Initialize required variables for plotting
         plot_parameters_dict = {
             pl_module.data_indices.model.output.name_to_index[name]: (
@@ -931,6 +932,7 @@ class PlotSample(BasePerBatchPlotCallback):
     ) -> None:
         logger = trainer.logger
 
+        print(batch.shape)
         # Build dictionary of indices and parameters to be plotted
         diagnostics = [] if self.config.data.diagnostic is None else self.config.data.diagnostic
         plot_parameters_dict = {

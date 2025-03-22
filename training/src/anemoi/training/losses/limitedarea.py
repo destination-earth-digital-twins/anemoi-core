@@ -66,11 +66,14 @@ class WeightedMSELossLimitedArea(BaseWeightedLoss):
             self.name += "_outside_lam"
         if wmse_contribution:
             self.name += "_contribution"
+        
+        # self.scalars = self.scalar
 
     def forward(
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
+        graph_label: str = None, 
         squash: bool = True,
         scalar_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -94,16 +97,18 @@ class WeightedMSELossLimitedArea(BaseWeightedLoss):
         """
         out = torch.square(pred - target)
 
-        limited_area_mask = self.scalar.subset("limited_area_mask").get_scalar(out.ndim, out.device)
+        limited_area_mask = self.scalar.subset(f"limited_area_mask_{graph_label}").get_scalar(out.ndim, out.device)
 
         if not self.inside_lam:
             limited_area_mask = ~limited_area_mask
 
+        self.node_weights[graph_label] = self.node_weights[graph_label].to(out.device)
         if not self.wmse_contribution:
-            self.node_weights *= limited_area_mask[0, 0, :, 0]
+            self.node_weights[graph_label] *= limited_area_mask[0, 0, :, 0].to(out.device)
 
         out *= limited_area_mask
 
-        out = self.scale(out, scalar_indices, without_scalars=["limited_area_mask"])
+        # out = self.scale(out, scalar_indices, without_scalars=["limited_area_mask_AA", "limited_area_mask_MEPS"])
 
-        return self.scale_by_node_weights(out, squash)
+        out = self.scale(out, scalar_indices, without_scalars=[i for i in self.scalar.tensors.keys() if i.startswith("limited_area")])
+        return self.scale_by_node_weights(out, graph_label, squash)

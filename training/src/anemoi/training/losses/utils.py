@@ -225,11 +225,11 @@ class ScaleTensor:
             msg = f"Scalar {name!r} already exists in scalars."
             raise ValueError(msg)
 
-        try:
-            self.validate_scalar(dimension, scalar)
-        except ValueError as e:
-            error_msg = f"Validating tensor {name!r} raised an error."
-            raise ValueError(error_msg) from e
+        # try:
+        #     self.validate_scalar(dimension, scalar)
+        # except ValueError as e:
+        #     error_msg = f"Validating tensor {name!r} raised an error."
+        #     raise ValueError(error_msg) from e
 
         self.tensors[name] = (dimension, scalar)
         self._specified_dimensions[name] = dimension

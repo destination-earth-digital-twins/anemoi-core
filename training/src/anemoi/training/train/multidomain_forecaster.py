@@ -78,8 +78,10 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         # maybe this can be fixed with dynamics graphs in the feature
 
         #TODO: create a check for checking if dict is non-empty
+        self.config = config
+        self.data_indices = data_indices
 
-        limited_area_mask, self.node_weights, self.output_mask = self.get_loss_kwargs(config, graph_data)
+        self.get_loss_kwargs(config, graph_data)
 
         # if config.model.get("output_mask", None) is not None:
         #     self.output_mask = Boolean1DMask(graph_data[config.graph.data][config.model.output_mask])
@@ -95,29 +97,13 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             graph_data=graph_data,
             config=DotDict(map_config_to_primitives(OmegaConf.to_container(config, resolve=True))),
         )
-        self.config = config
-        self.data_indices = data_indices
 
         self.save_hyperparameters()
 
         self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
 
-        variable_scaling = self.get_variable_scaling(config, data_indices)
 
         self.internal_metric_ranges, self.val_metric_ranges = self.get_val_metric_ranges(config, data_indices)
-
-        
-
-        # Scalars to include in the loss function, must be of form (dim, scalar)
-        # Use -1 for the variable dimension, -2 for the latlon dimension
-        # Add mask multiplying NaN locations with zero. At this stage at [[1]].
-        # Filled after first application of preprocessor. dimension=[-2, -1] (latlon, n_outputs).
-
-        self.scalars = {
-            "variable": (-1, variable_scaling),
-            "loss_weights_mask": ((-2, -1), torch.ones((1, 1))),
-            "limited_area_mask": limited_area_mask,
-        }
 
         # Kwargs to pass to the loss function
         loss_kwargs = {"node_weights": self.node_weights}
@@ -197,17 +183,18 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             limited_area_mask = {}
             self.node_weights={}
             self.output_mask={}
+            self.scalars={}
             for graph_label, graph in graph_data.items():
-                limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
+                self.scalars[f"limited_area_mask_{graph_label}"] =  (2, self.get_limited_area_mask(config, graph))
                 self.node_weights[graph_label] = self.get_node_weights(config, graph)
                 self.output_mask[graph_label] = Boolean1DMask(graph[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
                 self.node_weights[graph_label] = self.output_mask[graph_label].apply(
                     self.node_weights[graph_label], 
                     dim=0, fill_value=0.0
-                    )
-            return tuple([(2, lam) for label, lam in limited_area_mask.items()]), self.node_weights, self.output_mask
+                    ).to(self.device)
+
         else:
-            limited_area_mask = self.get_limited_area_mask(config, graph_data)
+            limited_area_mask = (2, self.get_limited_area_mask(config, graph_data))
             self.node_weights = self.get_node_weights(config, graph_data)
             self.output_mask = Boolean1DMask(graph_data[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
             self.node_weights = self.output_mask.apply(
@@ -215,7 +202,20 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                 dim=0, fill_value=0.0
                 )
             self.node_weights.to(self.device)
-            return (2, limited_area_mask), self.node_weights, self.output_mask
+            self.scalars["limited_area_mask"] = limited_area_mask
+        
+        # Scalars to include in the loss function, must be of form (dim, scalar)
+        # Use -1 for the variable dimension, -2 for the latlon dimension
+        # Add mask multiplying NaN locations with zero. At this stage at [[1]].
+        # Filled after first application of preprocessor. dimension=[-2, -1] (latlon, n_outputs).
+        variable_scaling = self.get_variable_scaling(config, self.data_indices)
+        self.scalars.update(
+            {
+            "variable": (-1, variable_scaling),
+            "loss_weights_mask": ((-2, -1), torch.ones((1, 1))),
+            # "limited_area_mask": limited_area_mask, 
+        }
+        )
         
     @staticmethod
     def get_limited_area_mask(
@@ -281,6 +281,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             If scalar is not found in valid scalars
         """
         config_container = OmegaConf.to_container(config, resolve=False)
+
         if isinstance(config_container, list):
             return torch.nn.ModuleList(
                 [
@@ -307,6 +308,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             if key not in scalars or []:
                 error_msg = f"Scalar {key!r} not found in valid scalars: {list(scalars.keys())}"
                 raise ValueError(error_msg)
+
             loss_function.add_scalar(*scalars[key], name=key)
 
         return loss_function
@@ -531,8 +533,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             y_pred = self(x, graph_label)
 
             y = batch_data[:, self.multi_step + rollout_step, ..., self.data_indices.internal_data.output.full]
-            # y includes the auxiliary variables, so we must leave those out when computing the loss
-            print(graph_label)
+            # # y includes the auxiliary variables, so we must leave those out when computing the loss
+
             loss = checkpoint(self.loss, y_pred, y, graph_label, use_reentrant=False) if training_mode else None
 
             x = self.advance_input(x, y_pred, batch, rollout_step)
@@ -650,6 +652,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                     y_pred_postprocessed,
                     y_postprocessed,
                     graph_label,
+                    graph_label,
                 ).to(self.device)
                 continue
 
@@ -669,6 +672,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                             y_pred,
                             y,
                             graph_label,
+                            mkey,
                             scalar_indices=[..., internal_model_indices],
                         ).to(self.device)
                 else:
@@ -684,6 +688,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
                         y_pred_postprocessed,
                         y_postprocessed,
                         graph_label,
+                        mkey,
                         scalar_indices=[..., indices],
                     ).to(self.device)
 
