@@ -509,7 +509,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 graph = gc.update_graph(graph)
                 graph = gc.clean(graph)
                 # TODO: check if the graphs gets updated
-                gc.save(graph, graph_filename)
+                gc.save(graph, graph_filename, overwrite=True)
             # insert graph_label into graph obj
             graph.label = graph_label
             graph_data_[graph_label] = graph

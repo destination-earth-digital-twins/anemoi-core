@@ -53,7 +53,6 @@ class BaseWeightedLoss(nn.Module, ABC):
 
         """
         super().__init__()
-        print(node_weights, "inside bwsme", type(node_weights))
         self.scalar = ScaleTensor()
 
         self.avg_function = torch.nanmean if ignore_nans else torch.mean
@@ -68,7 +67,6 @@ class BaseWeightedLoss(nn.Module, ABC):
             self.node_weights = node_weights
         else:
             node_weights = OmegaConf.to_container(node_weights, resolve=True)
-            print("node_weights", node_weights)
             self.node_weights = node_weights
             
     @functools.wraps(ScaleTensor.add_scalar, assigned=("__doc__", "__annotations__"))
@@ -145,7 +143,6 @@ class BaseWeightedLoss(nn.Module, ABC):
         # THIS FEATURE MAY CHANGE IN THE FUTURE AND OPTIMIZED
 
         # Squash by last dimension
-        print("scale", graph_label, not graph_label)
         if squash:
             if not graph_label:
                 x = self.avg_function(x, dim=-1)
@@ -170,8 +167,6 @@ class BaseWeightedLoss(nn.Module, ABC):
             x /= self.sum_function(self.node_weights[..., None].expand_as(x), dim=(0, 1, 2))
         else:
             # multi domain
-            print("graph_label", graph_label)
-            print("inside loss scale nodes",x.device, x.dtype, self.node_weights[graph_label].dtype, self.node_weights[graph_label].device)
             # Weight by area, due to weighting construction is analagous to a mean
             self.node_weights[graph_label] = self.node_weights[graph_label].to(x.device) # tmp solution
             x *= self.node_weights[graph_label][..., None].expand_as(x)

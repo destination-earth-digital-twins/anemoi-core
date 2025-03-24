@@ -16,7 +16,7 @@ forcing:
 - "sin_julian_day"
 - "sin_local_time"
 - "insolation"
-#- "lsm"
+- "lsm"
 #- "sdor"
 #- "slor"
 - "z"
@@ -59,7 +59,7 @@ normalizer:
   - "sin_julian_day"
   - "sin_local_time"
   - "insolation"
-  #- "lsm"
+  - "lsm"
 
 imputer:
   default: "none"

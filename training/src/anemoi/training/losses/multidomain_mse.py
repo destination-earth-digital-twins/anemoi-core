@@ -14,19 +14,18 @@ import logging
 
 import torch
 
-from anemoi.training.losses.weightedloss import BaseWeightedLoss
+from anemoi.training.losses.mse import WeightedMSELoss
 from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
 
 
-class WeightedMSELoss(BaseWeightedLoss):
-    """Node-weighted MSE loss."""
-
-    name = "wmse"
+class MultiDomainMSELoss(WeightedMSELoss):
+    
 
     def __init__(
         self,
+        loss_name: str,
         node_weights: torch.Tensor | dict[torch.Tensor],
         ignore_nans: bool = False,
         **kwargs,
@@ -40,13 +39,15 @@ class WeightedMSELoss(BaseWeightedLoss):
         ignore_nans : bool, optional
             Allow nans in the loss and apply methods ignoring nans for measuring the loss, by default False
 
-        """
+        """ 
         super().__init__(
             node_weights=node_weights,
             ignore_nans=ignore_nans,
             **kwargs,
         )
-
+        self.loss_name = loss_name
+        self.name = f"multidomain_wmse_{loss_name}"
+    
     def forward(
         self,
         pred: torch.Tensor,
@@ -56,30 +57,5 @@ class WeightedMSELoss(BaseWeightedLoss):
         scalar_indices: tuple[int, ...] | None = None,
         without_scalars: list[str] | list[int] | None = None,
     ) -> torch.Tensor:
-        """Calculates the lat-weighted MSE loss.
-
-        Parameters
-        ----------
-        pred : torch.Tensor
-            Prediction tensor, shape (bs, ensemble, lat*lon, n_outputs)
-        target : torch.Tensor
-            Target tensor, shape (bs, ensemble, lat*lon, n_outputs)
-        squash : bool, optional
-            Average last dimension, by default True
-        scalar_indices: tuple[int,...], optional
-            Indices to subset the calculated scalar with, by default None
-        without_scalars: list[str] | list[int] | None, optional
-            list of scalars to exclude from scaling. Can be list of names or dimensions to exclude.
-            By default None
-
-        Returns
-        -------
-        torch.Tensor
-            Weighted MSE loss
-        """
-        
-        # added graph label to fetch correct node weights for different domains
-
-        out = torch.square(pred - target)
-        out = self.scale(out, scalar_indices, without_scalars=without_scalars)
-        return self.scale_by_node_weights(out, graph_label, squash)
+        graph_label = str(graph_label)
+        return super().forward(pred, target, graph_label, squash, scalar_indices, without_scalars) if self.loss_name == graph_label else torch.tensor((float('nan')))
