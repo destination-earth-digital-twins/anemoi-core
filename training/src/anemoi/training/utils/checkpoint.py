@@ -70,6 +70,27 @@ def save_inference_checkpoint(model: torch.nn.Module, metadata: dict, save_path:
     return inference_filepath
 
 
+#def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> nn.Module:
+#
+#    # Load the checkpoint
+#    checkpoint = torch.load(ckpt_path, map_location=model.device)
+#
+#    # Filter out layers with size mismatch
+#    state_dict = checkpoint["state_dict"]
+#
+#    model_state_dict = model.state_dict()
+#
+#    for key in state_dict.copy():
+#        if key in model_state_dict and state_dict[key].shape != model_state_dict[key].shape:
+#            LOGGER.info("Skipping loading parameter: %s", key)
+#            LOGGER.info("Checkpoint shape: %s", str(state_dict[key].shape))
+#            LOGGER.info("Model shape: %s", str(model_state_dict[key].shape))
+#
+#            del state_dict[key]  # Remove the mismatched key
+#
+#   # Load the filtered st-ate_dict into the model
+#    model.load_state_dict(state_dict, strict=False)
+#    return model
 def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> nn.Module:
 
     # Load the checkpoint
@@ -80,18 +101,39 @@ def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> 
 
     model_state_dict = model.state_dict()
 
-    for key in state_dict.copy():
-        if key in model_state_dict and state_dict[key].shape != model_state_dict[key].shape:
-            LOGGER.info("Skipping loading parameter: %s", key)
-            LOGGER.info("Checkpoint shape: %s", str(state_dict[key].shape))
-            LOGGER.info("Model shape: %s", str(model_state_dict[key].shape))
+    from difflib import get_close_matches
 
-            del state_dict[key]  # Remove the mismatched key
+    for key in state_dict.copy():
+        if key not in model_state_dict:
+            LOGGER.info("Key '%s' from checkpoint is not inside the model. Trying to match!", key)
+            
+            # Find a similar key in model_state_dict
+            similar_keys = get_close_matches(key, model_state_dict.keys(), n=1, cutoff=0.6)
+
+            if similar_keys:
+                matched_key = similar_keys[0]
+                LOGGER.info("Key '%s' might correspond to '%s'. Checking shape...", key, matched_key)
+
+                if state_dict[key].shape == model_state_dict[matched_key].shape:
+                    LOGGER.info("Checkpoint shape: %s", str(state_dict[key].shape))
+                    LOGGER.info("Model shape: %s", str(model_state_dict[matched_key].shape))
+                    LOGGER.info("Updating layer name in the checkpoint: '%s' → '%s'", key, matched_key)
+
+                    # Rename the key by assigning and deleting the old key
+                    state_dict[matched_key] = state_dict.pop(key)
+                else:
+                    LOGGER.warning("Shape mismatch: '%s' (Checkpoint: %s) vs '%s' (Model: %s)",
+                                   key, state_dict[key].shape, matched_key, model_state_dict[matched_key].shape)
+                    del state_dict[key]
+                    # raise warning or delete key? for now deleting...
+            else:
+                LOGGER.warning("No close match found for key: %s", key)
+                del state_dict[key]
+                # raise warning or delete key? for now deleting...
 
     # Load the filtered st-ate_dict into the model
     model.load_state_dict(state_dict, strict=False)
     return model
-
 
 def freeze_submodule_by_name(module: nn.Module, target_name: str) -> None:
     """
