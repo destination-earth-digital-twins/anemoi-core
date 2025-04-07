@@ -199,7 +199,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             self.output_mask={}
             for graph_label, graph in graph_data.items():
                 limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
-                self.node_weights[graph_label] = self.get_node_weights(config, graph)
+                self.node_weights[graph_label] = self.get_node_weights(graph_label, config, graph)
                 self.output_mask[graph_label] = Boolean1DMask(graph[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
                 self.node_weights[graph_label] = self.output_mask[graph_label].apply(
                     self.node_weights[graph_label], 
@@ -412,8 +412,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         return torch.from_numpy(variable_loss_scaling)
 
     @staticmethod
-    def get_node_weights(config: DictConfig, graph_data: HeteroData) -> torch.Tensor:
-        node_weighting = instantiate(config.training.node_loss_weights)
+    def get_node_weights(graph_label: str, config: DictConfig, graph_data: HeteroData) -> torch.Tensor:
+        node_weighting = instantiate(config.training.node_loss_weights[graph_label])
         return node_weighting.weights(graph_data)
 
     def set_model_comm_group(
@@ -532,7 +532,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
             y = batch_data[:, self.multi_step + rollout_step, ..., self.data_indices.internal_data.output.full]
             # y includes the auxiliary variables, so we must leave those out when computing the loss
-            print(graph_label)
+            #print(graph_label)
+            #print(torch.isnan(y_pred).sum(), torch.isnan(batch_data).sum(),torch.isnan(x).sum())
             loss = checkpoint(self.loss, y_pred, y, graph_label, use_reentrant=False) if training_mode else None
 
             x = self.advance_input(x, y_pred, batch, rollout_step)
