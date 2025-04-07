@@ -15,22 +15,12 @@ defaults:
 # For example to change from default GPU count:
 # hardware:
 #   num_gpus_per_node: 1
-graph:
-  overwrite: False
-  nodes:
-    hidden:
-      node_builder:
-        _target_: anemoi.graphs.nodes.StretchedTriNodes
-        lam_resolution: 10
-        global_resolution: 7
-        reference_node_name: ${graph.data}
-        mask_attr_name: cutout
-        margin_radius_km: 11
 
 diagnostics:
   log:
+    interval: 100
     mlflow:
-      enabled: True
+      enabled: False
       offline: False
       authentication: True
       experiment_name: 'multi-domain-experiments'
@@ -42,25 +32,19 @@ diagnostics:
   print_memory_summary: True
   show_entire_globe: False
 hardware:
-  files: 
-    warm_start: /pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt
+  files:
+    warm_start: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/checkpoints/ERA5_checkpoints/4b23cfdc-f24f-428a-98ce-1c800979e30a/4b23cfdc-f24f-428a-98ce-1c800979e30a.ckpt
   num_gpus_per_node: 8
-  num_nodes: 8
+  num_nodes: 1
   num_gpus_per_model: 8
 model:
-  num_channels: 1024
+  num_channels: 128
 training:
-  run_id: 
   transfer_learning: True
   load_weights_only: True
-  max_steps: 12000
-
+  fork_run_id: 4b23cfdc-f24f-428a-98ce-1c800979e30a
   lr:
-    rate: 0.4e-5 #local_lr
-    iterations: ${training.max_steps} # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
-    min: 3e-7 #Not scaled by #GPU
-    warmup_t: 1000
-
+    rate: 0.04e-4 #local_lr
   validation_metrics:
     # loss class to initialise
     - _target_: anemoi.training.losses.mse.WeightedMSELoss
@@ -72,58 +56,57 @@ training:
       scalars: []
       # other kwargs
       ignore_nans: True
-    - _target_: anemoi.training.losses.limitedarea.WeightedMSELossLimitedArea
-      scalars: ['limited_area_mask_MEPS', 'limited_area_mask_AA']
-      inside_lam: True
-      wmse_contribution: False
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "CERRA"
       ignore_nans: True
     - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
-      scalars: ['limited_area_mask_AA']
-      loss_name: "AA"
-      inside_lam: True
-      wmse_contribution: False
-      ignore_nans: True
-    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
-      scalars: ['limited_area_mask_MEPS']
       loss_name: "MEPS"
-      inside_lam: True
-      wmse_contribution: False
       ignore_nans: True
-
 
 dataloader:
-  num_workers:
-    training: 8
-    validation: 8
-    test: 1
-    predict: 1
   limit_batches:
-    training: 400
-    validation: 70
+    training: 100
+    validation: 100
 
+  #new
   training_periods:
     MEPS:
       start: 2020-02-05 
-      end: 2022-05-31
-    AA:
-      start: 2017-01-01
-      end: 2022-05-31
+      end: 2023-05-31
+    CERRA:
+      start: null
+      end: "2018-12-31"
 
+  #new
   validation_periods:
     MEPS:
-      start: 2022-06-01 
-      end: 2023-05-31
-    AA:
-      start: 2022-06-01
-      end: 2022-12-31
+      start: 2023-06-01
+      end: 2024-05-31
+    CERRA:
+      start: "2019-01-01"
+      end: "2019-12-31"
 
+  # new
   regional_datasets:
     MEPS: 
       dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-    AA: 
-      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/AROME-ARCTIC/arome_arctic-2_5km-2017-2024.zarr
+    CERRA: 
+      dataset: 
+        join:
+          - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/CERRA/cerra-rr-an-oper-0001-mars-5p5km-1984-2020-3h-v2-rmi.zarr
+            rename:
+                2t_2: 2t
+                2d_2: 2d
+                10u_10: 10u
+                10v_10: 10v
+                msl_0: msl
+            rescale:
+                tp:
+                  scale: 0.001
+                  offset: 0.0
+          - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/CERRA/cerra-rr-an-oper-0001-mars-5p5km-1984-2020-3h-v2-z_sfc-rmi.zarr
 
-  select:
+  select: 
     - 2t
     - 2d
     - 10u
@@ -193,5 +176,3 @@ dataloader:
     - sin_julian_day
     - sin_local_time
     - insolation
-
-    

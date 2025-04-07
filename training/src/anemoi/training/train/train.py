@@ -70,7 +70,7 @@ class AnemoiTrainer:
         OmegaConf.resolve(config)
         self.config = config
 
-        self.start_from_checkpoint = bool(self.config.training.run_id) or bool(self.config.training.fork_run_id)
+        self.start_from_checkpoint = bool(self.config.training.run_id) or bool(self.config.training.fork_run_id) or bool(self.config.hardware.files.warm_start)
         self.load_weights_only = self.config.training.load_weights_only
         self.parent_uuid = None
 
@@ -161,7 +161,7 @@ class AnemoiTrainer:
         }
 
         model = GraphForecaster(**kwargs)
-
+        # print("last checkpoint ", self.last_checkpoint)
         if self.load_weights_only:
             # Sanify the checkpoint for transfer learning
             if self.config.training.transfer_learning:
@@ -220,13 +220,16 @@ class AnemoiTrainer:
             return None
 
         fork_id = self.fork_run_server2server or self.config.training.fork_run_id
-        checkpoint = Path(
-            self.config.hardware.paths.checkpoints.parent,
-            fork_id or self.lineage_run,
-            self.config.hardware.files.warm_start or "last.ckpt",
-        )
+        # checkpoint = Path(
+        #     self.config.hardware.paths.checkpoints.parent,
+        #     fork_id or self.lineage_run,
+        #     self.config.hardware.files.warm_start or "last.ckpt",
+        # )
+        checkpoint = Path(self.config.hardware.files.warm_start)
 
         # Check if the last checkpoint exists
+        print("checkpoint ", Path(checkpoint))
+        print(Path(checkpoint).exists())
         if Path(checkpoint).exists():
             LOGGER.info("Resuming training from last checkpoint: %s", checkpoint)
             return checkpoint
@@ -489,7 +492,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         graph_data_ = {}
         # for graph_label, dataset in self.get_processed_configs
         for graph_label, dataset in self.config.dataloader.training.items(): #Has to be a dictionary
-            print(graph_label)
+            # print(graph_label)
             graph_filename = Path(
                 self.config.hardware.paths.graph,
                 graph_label + ".pt",
@@ -503,7 +506,7 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 from anemoi.graphs.nodes import ZarrDatasetNodes
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
-                print(f"this is the ds: {dataset}")
+                # print(f"this is the ds: {dataset}")
                 graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph_config.attributes.nodes) #empty graph
                 gc = GraphCreator(config=graph_config)
                 graph = gc.update_graph(graph)

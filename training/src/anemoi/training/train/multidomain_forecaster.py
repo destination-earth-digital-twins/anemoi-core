@@ -185,7 +185,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             self.output_mask={}
             self.scalars={}
             for graph_label, graph in graph_data.items():
-                limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
+                self.scalars[f"limited_area_mask_{graph_label}"] =  (2, self.get_limited_area_mask(config, graph))
                 self.node_weights[graph_label] = self.get_node_weights(graph_label, config, graph)
                 self.output_mask[graph_label] = Boolean1DMask(graph[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
                 self.node_weights[graph_label] = self.output_mask[graph_label].apply(
@@ -562,6 +562,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         batch_data, graph_label = batch
         batch_data = self.allgather_batch(batch)
+        print("graph label ", graph_label)
 
         loss = torch.zeros(1, dtype=batch_data.dtype, device=self.device, requires_grad=False)
         metrics = {}

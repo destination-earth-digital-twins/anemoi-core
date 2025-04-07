@@ -45,7 +45,7 @@ hardware:
   files: 
     warm_start: /pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt
   num_gpus_per_node: 8
-  num_nodes: 8
+  num_nodes: 1
   num_gpus_per_model: 8
 model:
   num_channels: 1024
@@ -54,6 +54,19 @@ training:
   transfer_learning: True
   load_weights_only: True
   max_steps: 12000
+  node_loss_weights:
+    MEPS:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+      node_attribute: area_weight
+    AA:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+      node_attribute: area_weight
 
   lr:
     rate: 0.4e-5 #local_lr
@@ -61,8 +74,8 @@ training:
     min: 3e-7 #Not scaled by #GPU
     warmup_t: 1000
 
-  validation_metrics:
-    # loss class to initialise
+  validation_metrics: 
+    #loss class to initialise
     - _target_: anemoi.training.losses.mse.WeightedMSELoss
       # Scalars to include in loss calculation
       # Cannot scale over the variable dimension due to possible remappings.
@@ -93,14 +106,13 @@ training:
 
 dataloader:
   num_workers:
-    training: 8
-    validation: 8
+    training: 6
+    validation: 6
     test: 1
     predict: 1
   limit_batches:
     training: 400
-    validation: 70
-
+    validation: 140
   training_periods:
     MEPS:
       start: 2020-02-05 
@@ -123,75 +135,97 @@ dataloader:
     AA: 
       dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/AROME-ARCTIC/arome_arctic-2_5km-2017-2024.zarr
 
-  select:
-    - 2t
-    - 2d
-    - 10u
-    - 10v
-    - msl
-    - sp
-    - lsm
-    - skt
-    - z
-    - tp
-    - u_100
-    - u_150
-    - u_200
-    - u_300
-    - u_400
-    - u_500
-    - u_700
-    - u_850
-    - u_925
-    - u_1000
-    - v_100
-    - v_150
-    - v_200
-    - v_300
-    - v_400
-    - v_500
-    - v_700
-    - v_850
-    - v_925
-    - v_1000
-    - t_100
-    - t_150
-    - t_200
-    - t_300
-    - t_400
-    - t_500
-    - t_700
-    - t_850
-    - t_925
-    - t_1000
-    - q_100
-    - q_150
-    - q_200
-    - q_300
-    - q_400
-    - q_500
-    - q_700
-    - q_850
-    - q_925
-    - q_1000
-    - z_100
-    - z_150
-    - z_200
-    - z_300
-    - z_400
-    - z_500
-    - z_700
-    - z_850
-    - z_925
-    - z_1000
-    - cos_latitude
-    - cos_longitude
-    - sin_latitude
-    - sin_longitude
-    - cos_julian_day
-    - cos_local_time
-    - sin_julian_day
-    - sin_local_time
-    - insolation
+  select: 
+      - 10u
+      - 10v
+      - 2d
+      - 2t
+      - cos_julian_day
+      - cos_latitude
+      - cos_local_time
+      - cos_longitude
+      - insolation
+      - lsm
+      - msl
+      - q_100
+      - q_1000
+      - q_150
+      - q_200
+      - q_250
+      - q_300
+      - q_400
+      - q_50
+      - q_500
+      - q_700
+      - q_850
+      - q_925
+      - sin_julian_day
+      - sin_latitude
+      - sin_local_time
+      - sin_longitude
+      - skt
+      - sp
+      - t_100
+      - t_1000
+      - t_150
+      - t_200
+      - t_250
+      - t_300
+      - t_400
+      - t_50
+      - t_500
+      - t_700
+      - t_850
+      - t_925
+      - tcw
+      - tp
+      - u_100
+      - u_1000
+      - u_150
+      - u_200
+      - u_250
+      - u_300
+      - u_400
+      - u_50
+      - u_500
+      - u_700
+      - u_850
+      - u_925
+      - v_100
+      - v_1000
+      - v_150
+      - v_200
+      - v_250
+      - v_300
+      - v_400
+      - v_50
+      - v_500
+      - v_700
+      - v_850
+      - v_925
+      - w_100
+      - w_1000
+      - w_150
+      - w_200
+      - w_250
+      - w_300
+      - w_400
+      - w_50
+      - w_500
+      - w_700
+      - w_850
+      - w_925
+      - z
+      - z_100
+      - z_1000
+      - z_150
+      - z_200
+      - z_250
+      - z_300
+      - z_400
+      - z_50
+      - z_500
+      - z_700
+      - z_850
+      - z_925
 
-    

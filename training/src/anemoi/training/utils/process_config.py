@@ -53,7 +53,7 @@ class ProcessConfigs:
         self.modify_validation
         self.config["dataloader"] = self.dataloader_config
        
-        print(self.dataloader_config)
+        print("config after preprocessing ", self.dataloader_config)
         self.config = OmegaConf.create(self.config)
         return self.config
 

@@ -172,23 +172,27 @@ class AnemoiMultiDomain(nn.Module):
             use_reentrant=use_reentrant,
         )
 
-    def forward(self, x: Tensor, graph_label: str, model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
+    def forward(self, x: Tensor, graph_label: list[str], model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
         batch_size = x.shape[0]
         ensemble_size = x.shape[2]
 
         graph = self._graph_data[graph_label]
-        graph = graph.to(x.device) # this is done recurisvely under the hood
-        #print("inside forware multidomain", graph.device)
+        graph = graph.to(x.device) # this is done recursively under the hood
+
         # add data positional info (lat/lon)
-        print("x shape", x.shape)
+        sin_cos_coords = torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)], dim = -1)
+
         x_data_latent = torch.cat(
             (
                 einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
-                torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)], dim = -1),
+                torch.cat([einops.repeat(sin_cos_coords, "e f -> (repeat e) f", repeat=batch_size)], dim = -1)
+                # torch.cat([torch.sin(graph[self._graph_name_data].x), torch.cos(graph[self._graph_name_data].x)], dim = -1),
             ),
             dim=-1,  # feature dimension
-        )
-        x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim = -1) #hidden hardcoded, should pass as argument
+        ) 
+        #x_hidden_latent = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim = -1) #hidden hardcoded, should pass as argument
+        sin_cos_coords = torch.cat([torch.sin(graph[self._graph_name_hidden].x), torch.cos(graph[self._graph_name_hidden].x)], dim = -1)
+        x_hidden_latent = torch.cat([einops.repeat(sin_cos_coords, "e f -> (repeat e) f", repeat=batch_size)], dim = -1)
         # Might want to change to reading lat/lons from buffer
 
         # get shard shapes

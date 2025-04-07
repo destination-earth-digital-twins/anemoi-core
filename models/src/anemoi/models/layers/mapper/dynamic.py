@@ -9,6 +9,7 @@
 
 import logging
 from typing import Optional
+import einops
 
 import torch
 from torch import nn
@@ -116,12 +117,14 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         shard_shapes: tuple[tuple[int], tuple[int]],
         model_comm_group: Optional[ProcessGroup] = None,
     ) -> PairTensor:
-        #print("inside dynamic basemapper, subgraph",sub_graph.device )
+
         size = (sum(x[0] for x in shard_shapes[0]), sum(x[0] for x in shard_shapes[1]))
         edge_index = sub_graph[self.edge_index_name].to(torch.int64)
         edge_attr = torch.cat(
             [sub_graph[attr] for attr in self.edge_attribute_names], axis=1
         )
+        edge_attr = torch.cat([einops.repeat(edge_attr, "e f -> (repeat e) f", repeat=batch_size)], dim = -1)
+        edge_index = torch.cat([einops.repeat(edge_index, "e f -> e (repeat f)", repeat=batch_size)], dim = -1)
 
         shapes_edge_attr = get_shape_shards(edge_attr, 0, model_comm_group)
         edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
@@ -141,7 +144,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         )
 
         x_dst = self.post_process(x_dst, shapes_dst, model_comm_group)
-
+    
         return x_dst
 
 
@@ -296,6 +299,18 @@ class DynamicGraphTransformerBackwardMapper(
             nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.out_channels_dst),
         )
+    def forward(
+        self,
+        x: PairTensor,
+        batch_size: int,
+        sub_graph: HeteroData,
+        shard_shapes: tuple[tuple[int], tuple[int]],
+        model_comm_group: Optional[ProcessGroup] = None,
+    ) -> PairTensor:
+        x_dst = super().forward(
+            x, batch_size, sub_graph, shard_shapes, model_comm_group
+        )
+        return x_dst
 
     def pre_process(self, x, shard_shapes, model_comm_group=None):
         x_src, x_dst, shapes_src, shapes_dst = super().pre_process(

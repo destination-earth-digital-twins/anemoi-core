@@ -70,6 +70,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
         if not self.config.dataloader.get("pin_memory", True):
             LOGGER.info("Data loader memory pinning disabled.")
+
     @cached_property
     def process_configs(self):
         # takes in the super config 
@@ -201,8 +202,8 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         data_readers = {}
         #dataset = data_reader.pop("dataset")
         for dataset_label, dataset_config in data_reader.items():
-            print(f"this is label: {dataset_label}")
-            print(f"this is conf: {dataset_config}")
+            # print(f"this is label: {dataset_label}")
+            # print(f"this is conf: {dataset_config}")
             #_dataset_config = {"dataset": dataset_config, "start": data_reader["start"], "end": data_reader["end"]}
             #dataset_config.update(data_reader)
             data_readers[dataset_label] = open_dataset(dataset_config)

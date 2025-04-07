@@ -184,6 +184,7 @@ def save_inference_checkpoint(model: torch.nn.Module, metadata: dict, save_path:
 
 def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> nn.Module:
     # Load the checkpoint
+    print("CHECKPOINT PATH ", ckpt_path)
     checkpoint = torch.load(ckpt_path, map_location=model.device)
 
     # Filter out layers with size mismatch
@@ -191,10 +192,10 @@ def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> 
     model_state_dict = model.state_dict()
 
     mapping = {
-        "layer_norm_attention_src": "layer_norm1",
-        "layer_norm_attention_dest": "layer_norm2",
         "layer_norm_attention": "layer_norm1",
         "layer_norm_mlp": "layer_norm2",
+        "layer_norm_attention_src": "layer_norm1",
+        "layer_norm_attention_dest": "layer_norm2",
     }
 
     for state_key in list(model_state_dict.keys()):
@@ -203,8 +204,12 @@ def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> 
             new_key = state_key
 
             for new, old in mapping.items():
+                print("NEW", new)
+                print("OLD", old)
                 old_key = re.sub(rf'\b{re.escape(new)}\b', old, new_key)
+                print("old_key ", old_key)
                 if old_key in state_dict:
+                    print(f"old key {old_key} is in state dict")
                     shape_state_dict = state_dict[old_key].shape
                     shape_model_state_dict = model_state_dict[state_key].shape
 
@@ -216,6 +221,9 @@ def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> 
                         print(f"Warning! Shape mismatch: {old_key}: {state_dict[old_key].shape} | {state_key}: {model_state_dict[state_key].shape}")
                         print(f"Removing key: {old_key} from state_dict")
                         del state_dict[old_key]
+                else:
+                    print(f"old key {old_key} not in state dict")
+        assert (state_key in state_dict), (f"state key {state_key} not in checkpoint")
 
     # Load the filtered state_dict into the model
     model.load_state_dict(state_dict, strict=False)

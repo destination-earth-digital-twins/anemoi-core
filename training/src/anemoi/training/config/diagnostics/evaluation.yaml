@@ -29,7 +29,7 @@ checkpoint:
 log:
   wandb:
     enabled: False
-    offline: False
+    offline: True
     log_model: False
     project: 'Anemoi'
     entity: ???
@@ -52,7 +52,7 @@ log:
     on_resume_create_child: True
     expand_hyperparams: # Which keys in hyperparams to expand
       - config
-  interval: 100
+  interval: 10
 
 enable_progress_bar: True
-print_memory_summary: False
+print_memory_summary: True

@@ -154,6 +154,7 @@ class AnemoiCheckpoint(ModelCheckpoint):
         return Path(filepath).parent / Path("inference-" + str(Path(filepath).name))
 
     def _save_checkpoint(self, trainer: pl.Trainer, lightning_checkpoint_filepath: str) -> None:
+        print("BEFORE SAVING CHECKPOINT")
         if trainer.is_global_zero:
             model = self._torch_drop_down(trainer)
 

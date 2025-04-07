@@ -372,10 +372,10 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
             raise RuntimeError from ae
 
         self.layer_norm_attention = layerNorm(normalized_shape=in_channels)
-        self.layer_norm_mlp = layerNorm(normalized_shape=out_channels)
+        # self.layer_norm_mlp = layerNorm(normalized_shape=out_channels)
 
         self.node_dst_mlp = nn.Sequential(
-            self.layer_norm_mlp,
+            layerNorm(normalized_shape=out_channels),
             linear(out_channels, hidden_dim),
             act_func(),
             linear(hidden_dim, out_channels),
@@ -383,7 +383,7 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
 
         if self.update_src_nodes:
             self.node_src_mlp = nn.Sequential(
-                self.layer_norm_mlp,
+                layerNorm(normalized_shape=out_channels),
                 linear(out_channels, hidden_dim),
                 act_func(),
                 linear(hidden_dim, out_channels),
