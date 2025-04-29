@@ -175,12 +175,9 @@ class AnemoiMultiDomain(nn.Module):
     def forward(self, x: Tensor, graph_label: str, model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
         batch_size = x.shape[0]
         ensemble_size = x.shape[2]
-
         graph = self._graph_data[graph_label]
         graph = graph.to(x.device) # this is done recurisvely under the hood
-        #print("inside forware multidomain", graph.device)
         # add data positional info (lat/lon)
-        print("x shape", x.shape)
         x_data_latent = torch.cat(
             (
                 einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
