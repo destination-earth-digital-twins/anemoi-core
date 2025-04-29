@@ -15,7 +15,7 @@ layer_kernels:
       #Any arguments to your chosen function go here e.g.
 
 processor:
-  _target_: anemoi.models.layers.processor.GraphTransformerProcessor
+  _target_: anemoi.models.layers.processor.static.GraphTransformerProcessor
   _convert_: all
   activation: ${model.activation}
   trainable_size: ${model.trainable_parameters.hidden2hidden}
@@ -27,7 +27,7 @@ processor:
   dropout_p: 0.0 # GraphTransformer or Transformer only
 
 encoder:
-  _target_: anemoi.models.layers.mapper.GraphTransformerForwardMapper
+  _target_: anemoi.models.layers.mapper.static.GraphTransformerForwardMapper
   _convert_: all
   trainable_size: ${model.trainable_parameters.data2hidden}
   sub_graph_edge_attributes: ${model.attributes.edges}
@@ -37,7 +37,7 @@ encoder:
   num_heads: 16 # GraphTransformer or Transformer only
 
 decoder:
-  _target_: anemoi.models.layers.mapper.GraphTransformerBackwardMapper
+  _target_: anemoi.models.layers.mapper.static.GraphTransformerBackwardMapper
   _convert_: all
   trainable_size: ${model.trainable_parameters.hidden2data}
   sub_graph_edge_attributes: ${model.attributes.edges}
