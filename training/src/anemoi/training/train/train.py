@@ -54,7 +54,7 @@ LOGGER = logging.getLogger(__name__)
 class AnemoiTrainer:
     """Utility class for training the model."""
 
-    def __init__(self, config: DictConfig) -> None:
+    def __init__(self, anemoi_config: DictConfig) -> None:
         """Initialize the Anemoi trainer.
 
         Parameters
@@ -67,8 +67,8 @@ class AnemoiTrainer:
         # This can increase performance (and TensorCore usage, where available).
         torch.set_float32_matmul_precision("high")
         # Resolve the config to avoid shenanigans with lazy loading
-        OmegaConf.resolve(config)
-        self.config = config
+        OmegaConf.resolve(anemoi_config)
+        self.config = anemoi_config
 
         self.start_from_checkpoint = bool(self.config.training.run_id) or bool(self.config.training.fork_run_id)
         self.load_weights_only = self.config.training.load_weights_only
@@ -135,7 +135,7 @@ class AnemoiTrainer:
 
             if graph_filename.exists() and not self.config.graph.overwrite:
                 LOGGER.info("Loading graph data from %s", graph_filename)
-                return torch.load(graph_filename)
+                return torch.load(graph_filename,weights_only=False)
 
         else:
             graph_filename = None
@@ -429,10 +429,10 @@ class AnemoiTrainer:
 
 class AnemoiMultiDomainTrainer(AnemoiTrainer):
     """Utility class for training the model."""
-    def __init__(self, config):
-        self.config = config
-        config = self.get_processed_configs
-        super().__init__(config)
+    def __init__(self, anemoi_config: DictConfig):
+        self.config = anemoi_config # temp hack
+        self.config = self.get_processed_configs
+        super().__init__(self.config)
 
         # process configs with multiple domains 
         # and train/validation periods
@@ -489,7 +489,6 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
         graph_data_ = {}
         # for graph_label, dataset in self.get_processed_configs
         for graph_label, dataset in self.config.dataloader.training.items(): #Has to be a dictionary
-            print(graph_label)
             graph_filename = Path(
                 self.config.hardware.paths.graph,
                 graph_label + ".pt",
@@ -497,13 +496,12 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
             # True False -> False
             if graph_filename.exists() and not self.config.graph.overwrite:
                 LOGGER.info("Loading graph data from %s", graph_filename)
-                graph = torch.load(graph_filename)
+                graph = torch.load(graph_filename, weights_only=False)
             else:
                 from anemoi.graphs.create import GraphCreator
                 from anemoi.graphs.nodes import ZarrDatasetNodes
 
                 graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
-                print(f"this is the ds: {dataset}")
                 graph = ZarrDatasetNodes(dataset, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph_config.attributes.nodes) #empty graph
                 gc = GraphCreator(config=graph_config)
                 graph = gc.update_graph(graph)
@@ -554,8 +552,21 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
-def main(config: DictConfig) -> None:
-    AnemoiMultiDomainTrainer(config).train()
+def main(anemoi_config: DictConfig) -> None:
+
+    try:
+        anemoi_trainer = hydra.utils.instantiate(
+            anemoi_config.training.runtime,
+            anemoi_config=anemoi_config,
+            _recursive_=False
+            )
+        anemoi_trainer.train()
+    except Exception as e:
+        LOGGER.error(
+            "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
+            anemoi_config.training.runtime
+        )
+
 
 
 if __name__ == "__main__":
