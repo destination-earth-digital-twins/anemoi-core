@@ -70,16 +70,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
 
         if not self.config.dataloader.get("pin_memory", True):
             LOGGER.info("Data loader memory pinning disabled.")
-    @cached_property
-    def process_configs(self):
-        # takes in the super config 
-        # also reads the train, val periods and the regional
-        # domain filenames
-        # inject correct periods and name into dict struct 
-        # which goes into anemoi.open_datasets
-        # this should return a dictconfig enable foo.bar.baz
-
-        return None 
+    
     @cached_property
     def statistics(self) -> dict:
         return self.ds_train.statistics
@@ -186,7 +177,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         shuffle: bool = True,
         rollout: int = 1,
         label: str = "generic",
-    ) -> NativeGridDataset:
+    ) -> NativeMultiGridDataset:
 
         r = max(rollout, self.rollout)
 
@@ -201,14 +192,9 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         data_readers = {}
         #dataset = data_reader.pop("dataset")
         for dataset_label, dataset_config in data_reader.items():
-            print(f"this is label: {dataset_label}")
-            print(f"this is conf: {dataset_config}")
-            #_dataset_config = {"dataset": dataset_config, "start": data_reader["start"], "end": data_reader["end"]}
-            #dataset_config.update(data_reader)
             data_readers[dataset_label] = open_dataset(dataset_config)
 
         
-        # print("inside get_ds fn", shuffle)
         return NativeMultiGridDataset(
             data_readers=data_readers,
             rollout=r,
