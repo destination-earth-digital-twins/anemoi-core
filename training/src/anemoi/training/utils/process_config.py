@@ -4,6 +4,8 @@ from copy import deepcopy
 
 class ProcessConfigs:
     def __init__(self, config):
+        # TODO: Generalize this class and make it prettier
+
         self.config = OmegaConf.to_container(config, resolve=True).copy()
 
         self.regional = self.config["dataloader"]["regional_datasets"].copy()
@@ -21,15 +23,21 @@ class ProcessConfigs:
         training_dataloader_config = {}
         for region, args in self.regional.items():
             filename = deepcopy(args).pop("dataset")
-            print(region)
-            print(filename)
+
             training_struct = deepcopy(self.training_struct)
             training_struct["dataset"]["cutout"][0]["dataset"] = filename
             training_struct["start"] = self.training_periods[region]["start"]
             training_struct["end"] = self.training_periods[region]["end"]
             training_struct["dataset"]["cutout"][0].update(args)
             training_dataloader_config[region] = training_struct
-            print(training_struct)
+
+        if "global_datasets" in self.config["dataloader"]:
+            global_struct = {
+                "dataset": self.config["dataloader"]["global_datasets"],
+                "start" : self.config["dataloader"]["training_periods"]["ERA5"]["start"],
+                "end" : self.config["dataloader"]["training_periods"]["ERA5"]["end"]
+            }
+            training_dataloader_config["ERA5"] = global_struct 
         self.dataloader_config["training"] = training_dataloader_config.copy()
 
 
@@ -45,6 +53,15 @@ class ProcessConfigs:
             validation_struct["end"] = self.validation_periods[region]["end"]
             validation_struct["dataset"]["cutout"][0].update(args)
             validation_dataloader_config[region] = validation_struct
+        
+        # hack not proud of this...
+        if "global_datasets" in self.config["dataloader"]:
+            global_struct = {
+                "dataset": self.config["dataloader"]["global_datasets"],
+                "start" : self.config["dataloader"]["validation_periods"]["ERA5"]["start"],
+                "end" : self.config["dataloader"]["validation_periods"]["ERA5"]["end"]
+            }
+            validation_dataloader_config["ERA5"] = global_struct
         self.dataloader_config["validation"] = validation_dataloader_config
 
     @property
@@ -53,7 +70,6 @@ class ProcessConfigs:
         self.modify_validation
         self.config["dataloader"] = self.dataloader_config
        
-        print(self.dataloader_config)
         self.config = OmegaConf.create(self.config)
         return self.config
 
