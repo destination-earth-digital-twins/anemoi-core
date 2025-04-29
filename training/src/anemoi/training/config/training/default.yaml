@@ -4,6 +4,20 @@ fork_run_id: null
 load_weights_only: null # only load model weights, do not restore optimiser states etc.
 transfer_learning: null # activate to perform transfer learning
 
+# Maps corresponding weights from old name to new.
+# Follows dict structure key : new name 
+# Value : old name. This method is only triggered
+# if mapping_weights exist and if both load_weights_only and
+# transfer_learning is set to true
+
+# mapping_weights:
+#   new_name : old_name
+
+# Choose normal anemoi runtime or multi-domain
+runtime:
+  # alternatives: AnemoiTrainer | AnemoiMultiDomainTrainer
+  _target_: anemoi.training.train.train.AnemoiTrainer
+
 # run in deterministic mode ; slows down
 deterministic: False
 
