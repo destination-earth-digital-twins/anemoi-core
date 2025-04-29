@@ -15,7 +15,8 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.distributed as dist
+from omegaconf import DictConfig
+
 
 from anemoi.training.train.forecaster import GraphForecaster
 from anemoi.utils.checkpoints import save_metadata
@@ -182,41 +183,52 @@ def save_inference_checkpoint(model: torch.nn.Module, metadata: dict, save_path:
 #     model.load_state_dict(state_dict, strict=False)
 #     return model
 
-def transfer_learning_loading(model: torch.nn.Module, ckpt_path: Path | str) -> nn.Module:
+def transfer_learning_loading(
+        config: DictConfig,
+        model: torch.nn.Module, 
+        ckpt_path: Path | str
+        ) -> nn.Module:
     # Load the checkpoint
     checkpoint = torch.load(ckpt_path, map_location=model.device)
-
     # Filter out layers with size mismatch
     state_dict = checkpoint["state_dict"].copy()
     model_state_dict = model.state_dict()
 
-    mapping = {
-        "layer_norm_attention_src": "layer_norm1",
-        "layer_norm_attention_dest": "layer_norm2",
-        "layer_norm_attention": "layer_norm1",
-        "layer_norm_mlp": "layer_norm2",
-    }
+    if hasattr(config.training.transfer_learning, "mapping_weights"):
+        # if mapping_weights exist, the algorithm down below will
+        # try to rename and inject the corresponding weight into the 
+        # new state_dict.
+        mapping = config.training.transfer_learning.mapping
+        LOGGER.info("Detected mapping_weights key. Starting to map weights")
 
-    for state_key in list(model_state_dict.keys()):
-        if state_key not in state_dict:
-            print(f"key: {state_key} is not present in checkpoint.")
-            new_key = state_key
+        for state_key in list(model_state_dict.keys()):
+            if state_key not in state_dict:
+                LOGGER.info(f"key: {state_key} is not present in checkpoint.")
+                new_key = state_key
 
-            for new, old in mapping.items():
-                old_key = re.sub(rf'\b{re.escape(new)}\b', old, new_key)
-                if old_key in state_dict:
-                    shape_state_dict = state_dict[old_key].shape
-                    shape_model_state_dict = model_state_dict[state_key].shape
+                for new, old in mapping.items():
+                    old_key = re.sub(rf'\b{re.escape(new)}\b', old, new_key)
+                    if old_key in state_dict:
+                        shape_state_dict = state_dict[old_key].shape
+                        shape_model_state_dict = model_state_dict[state_key].shape
 
-                    print("Checking shape...")
-                    if shape_state_dict == shape_model_state_dict:
-                        print(f"Replacing keyname {old} -> {new} in: {old_key}")
-                        state_dict[state_key] = state_dict[old_key]
-                    else:
-                        print(f"Warning! Shape mismatch: {old_key}: {state_dict[old_key].shape} | {state_key}: {model_state_dict[state_key].shape}")
-                        print(f"Removing key: {old_key} from state_dict")
-                        del state_dict[old_key]
+                        LOGGER.info("Checking shape...")
+                        if shape_state_dict == shape_model_state_dict:
+                            LOGGER.info(f"Replacing keyname {old} -> {new} in: {old_key}")
+                            state_dict[state_key] = state_dict[old_key]
+                        else:
+                            LOGGER.info(f"Warning! Shape mismatch: {old_key}: {state_dict[old_key].shape} | {state_key}: {model_state_dict[state_key].shape}")
+                            LOGGER.info(f"Removing key: {old_key} from state_dict")
+                            del state_dict[old_key]
+    else:
+        for key in state_dict.copy():
+            if key in model_state_dict and state_dict[key].shape != model_state_dict[key].shape:
+                LOGGER.info("Skipping loading parameter: %s", key)
+                LOGGER.info("Checkpoint shape: %s", str(state_dict[key].shape))
+                LOGGER.info("Model shape: %s", str(model_state_dict[key].shape))
 
+                del state_dict[key]  # Remove the mismatched key
+        
     # Load the filtered state_dict into the model
     model.load_state_dict(state_dict, strict=False)
     
