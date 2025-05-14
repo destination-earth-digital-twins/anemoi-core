@@ -39,6 +39,7 @@ class NativeMultiGridDataset(IterableDataset):
         self,
         data_readers: dict[Callable],
         grid_indices: dict[type[BaseGridIndices]],
+        dataset_weights: dict,
         rollout: int = 1,
         multistep: int = 1,
         timeincrement: int = 1,
@@ -69,6 +70,7 @@ class NativeMultiGridDataset(IterableDataset):
         """
         self.label = label
         self.effective_bs = effective_bs 
+        self.dataset_weights = dataset_weights
 
         self.data = data_readers
 
@@ -210,12 +212,19 @@ class NativeMultiGridDataset(IterableDataset):
 
         # Divide this equally across shards (one shard per group!)
         # shard_size = len(self.valid_date_indices) // self.model_comm_num_groups
-        merged_date_indices = []
-        for dataset_label, valid_date_indices in self.valid_date_indices.items():
-            merged_date_indices.extend(valid_date_indices)
-        shard_size = len(merged_date_indices)// self.model_comm_num_groups // self.effective_bs 
-        # print("shard_size ", shard_size)
-
+        # merged_date_indices = []
+        # for dataset_label, valid_date_indices in self.valid_date_indices.items():
+        #     merged_date_indices.extend(valid_date_indices)
+        # shard_size = len(merged_date_indices)// self.model_comm_num_groups // self.effective_bs 
+        # # print("shard_size ", shard_size)
+        if self.shuffle == True:
+            total_dataset_length = self.calculate_weights(self.dataset_weights)
+            shard_size = sum(int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.dataset_weights.keys())// self.model_comm_num_groups
+        else:
+            merged_date_indices = []
+            for dataset_label, valid_date_indices in self.valid_date_indices.items():
+                merged_date_indices.extend(valid_date_indices)
+            shard_size = len(merged_date_indices)// self.model_comm_num_groups
         shard_start = self.model_comm_group_id * shard_size
         shard_end = (self.model_comm_group_id + 1) * shard_size
 
@@ -259,6 +268,15 @@ class NativeMultiGridDataset(IterableDataset):
             base_seed,
             sanity_rnd,
         )
+    def calculate_weights(self, dataset_weights: dict):
+         # sample_dataset = [[k] * (len(v)//self.effective_bs) for k, v in self.valid_date_indices.items()]
+        #config.dataloader.dataset weights: dictionary with graph_label:dataset_weight (in percentages adding up to 1)
+        # we assume mode = oversampling for now (maybe later also undersampling?)
+        
+        max_dataset_label = max(self.valid_date_indices, key = lambda key: len(self.valid_date_indices[key]))
+        total_dataset_length = len(self.valid_date_indices[max_dataset_label])//dataset_weights[max_dataset_label]
+        
+        return total_dataset_length
 
     def __iter__(self) -> torch.Tensor:
         """Return an iterator over the dataset.
@@ -269,35 +287,43 @@ class NativeMultiGridDataset(IterableDataset):
         Currently it receives data with an ensemble dimension, which is discarded for
         now. (Until the code is "ensemble native".)
         """
-        sample_dataset = [[k] * (len(v)//self.effective_bs) for k, v in self.valid_date_indices.items()]
-
+        total_dataset_length = self.calculate_weights(self.dataset_weights)
+        sample_dataset = [[dataset_label]*int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.dataset_weights.keys()]
         if self.shuffle:
             shuffled_random_indices = []
             for dataset_label, v in self.valid_date_indices.items():
                 shuffled_random_indices.append(self.rng.choice(
                     self.valid_date_indices[dataset_label],
-                    size=(len(self.valid_date_indices[dataset_label])//self.effective_bs, self.effective_bs),
-                    replace=False,
+                    size=(int(self.dataset_weights[dataset_label]*total_dataset_length)),
+                    replace=True,
                 )) 
+                print("LENGTH OF THE DATASET ", dataset_label, len(self.valid_date_indices[dataset_label]))
+                print("SAMPLE SIZE FOR DATASET ", dataset_label, int(self.dataset_weights[dataset_label]*total_dataset_length))
+                # shuffled_random_indices.append(self.rng.choice(
+                #     self.valid_date_indices[dataset_label],
+                #     size=(len(self.valid_date_indices[dataset_label])//self.effective_bs, self.effective_bs),
+                #     replace=False,
+                # )) 
             shuffled_random_indices = np.concatenate(shuffled_random_indices, axis = 0)
+            print("TOTAL DATASET LENGTH ", len(shuffled_random_indices))
             merged_random_indices = self.rng.choice(
                 list(range(len(shuffled_random_indices))),
                 size = len(shuffled_random_indices),
                 replace=False
             )
-            shuffled_chunk_indices = shuffled_random_indices[merged_random_indices, :][self.chunk_index_range, :] 
+            shuffled_chunk_indices = shuffled_random_indices[merged_random_indices][self.chunk_index_range] 
 
             # map batch to graph 
             sample_dataset = np.concatenate(sample_dataset)[merged_random_indices][self.chunk_index_range]
         else:
-            reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
-            validation_date_indices = np.array(list(interleave(list(reshaped_date_indices))))
+            # reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
+            sample_dataset = np.concatenate([[k]*len(v) for k, v in self.valid_date_indices.items()])
+            validation_date_indices = np.concatenate([v for k, v in self.valid_date_indices.items()])
+            # validation_date_indices = np.array(list(interleave(list(reshaped_date_indices))))
             shuffled_chunk_indices = validation_date_indices[self.chunk_index_range]
-            
             # map batch to graph 
-            sample_dataset = np.array(list(interleave(sample_dataset)))
+            # sample_dataset = np.array(list(interleave(sample_dataset)))
             sample_dataset = sample_dataset[self.chunk_index_range]
-
         LOGGER.debug(
             (
                 "Worker pid %d, label %s, worker id %d, global_rank %d, "

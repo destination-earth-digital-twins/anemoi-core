@@ -120,7 +120,6 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
             f"Timestep ({self.config.data.timestep} == {timestep}) isn't a "
             f"multiple of data frequency ({self.config.data.frequency} == {frequency})."
         )
-
         LOGGER.info(
             "Timeincrement set to %s for data with frequency, %s, and timestep, %s",
             timestep // frequency,
@@ -194,7 +193,8 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
         for dataset_label, dataset_config in data_reader.items():
             data_readers[dataset_label] = open_dataset(dataset_config)
 
-        
+        print("MULTIDOMAIN WEIGHTING ", self.config.dataloader.dataset_weights)
+
         return NativeMultiGridDataset(
             data_readers=data_readers,
             rollout=r,
@@ -202,6 +202,7 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
             timeincrement=self.timeincrement,
             shuffle=shuffle,
             grid_indices=self.grid_indices,
+            dataset_weights=self.config.dataloader.dataset_weights,
             label=label,
             effective_bs=effective_bs,
         )
