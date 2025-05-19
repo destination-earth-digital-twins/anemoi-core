@@ -288,7 +288,6 @@ class NativeMultiGridDataset(IterableDataset):
         now. (Until the code is "ensemble native".)
         """
         total_dataset_length = self.calculate_weights(self.dataset_weights)
-        sample_dataset = [[dataset_label]*int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.dataset_weights.keys()]
         if self.shuffle:
             shuffled_random_indices = []
             for dataset_label, v in self.valid_date_indices.items():
@@ -314,6 +313,7 @@ class NativeMultiGridDataset(IterableDataset):
             shuffled_chunk_indices = shuffled_random_indices[merged_random_indices][self.chunk_index_range] 
 
             # map batch to graph 
+            sample_dataset = [[dataset_label]*int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.valid_date_indices.keys()]
             sample_dataset = np.concatenate(sample_dataset)[merged_random_indices][self.chunk_index_range]
         else:
             # reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
@@ -340,6 +340,7 @@ class NativeMultiGridDataset(IterableDataset):
 
         for num, batch in enumerate(shuffled_chunk_indices):
             dataset_label = sample_dataset[num]
+            print("dataset_label", dataset_label)
             for batch_idx in range(self.effective_bs):
                 if isinstance(batch, np.ndarray):
                     i = batch[batch_idx]
@@ -350,7 +351,7 @@ class NativeMultiGridDataset(IterableDataset):
                 grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
                 if isinstance(grid_shard_indices, slice):
                     # Load only shards into CPU memory
-                    # print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
+                    print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
                     x = self.data[dataset_label][start : end : self.timeincrement, :, :, grid_shard_indices]
                 else:
                     # Load full grid in CPU memory, select grid_shard after
