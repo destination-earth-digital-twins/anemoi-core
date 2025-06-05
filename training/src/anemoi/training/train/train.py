@@ -553,19 +553,21 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(anemoi_config: DictConfig) -> None:
-
-    try:
-        anemoi_trainer = hydra.utils.instantiate(
-            anemoi_config.training.runtime,
-            anemoi_config=anemoi_config,
-            _recursive_=False
-            )
-        anemoi_trainer.train()
-    except Exception as e:
-        LOGGER.error(
-            "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
-            anemoi_config.training.runtime
-        )
+    anemoi_trainer = AnemoiMultiDomainTrainer(anemoi_config=anemoi_config)
+    anemoi_trainer.train()
+    # try:
+    print("THIS IS THE MULTIDOMAIN TRAINING REPO")
+    # anemoi_trainer = hydra.utils.instantiate(
+    #     anemoi_config.training.runtime,
+    #     anemoi_config=anemoi_config,
+    #     _recursive_=False
+    #     )
+    # anemoi_trainer.train()  
+    # except Exception as e:
+    #     LOGGER.error(
+    #         "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
+    #         anemoi_config.training.runtime
+    #     )
 
 
 

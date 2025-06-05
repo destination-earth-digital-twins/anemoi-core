@@ -25,6 +25,12 @@ graph:
         margin_radius_km: 11
 
 diagnostics:
+  checkpoint:
+    every_n_minutes:
+      num_models_saved: 0
+    
+    every_n_epochs:
+      num_models_saved: 3
   log:
     mlflow:
       enabled: True
@@ -34,7 +40,7 @@ diagnostics:
       project_name: Anemoi
       log_model: False
       tracking_uri: https://mlflow.ecmwf.int
-      run_name: md-MEPS-AA-test-weighing
+      run_name: md-MEPS-aa-rollout-4
     wandb:
       enabled: False
   print_memory_summary: True
@@ -52,20 +58,26 @@ hardware:
 
 model:
   num_channels: 1024
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
 
 training:
   runtime: 
     _target_: anemoi.training.train.train.AnemoiMultiDomainTrainer
-  run_id: #0725a899ea34497f9d64067b20b7d9ac #checkpoint/3fb85b72ba9647d5ae4fe86ce1b5a885
-  fork_run_id: 3fb85b72ba9647d5ae4fe86ce1b5a885
-  transfer_learning: True
+  run_id: 7ec728d06b8f419a9d602ac0496de6f4 #0c48f04b049244fdab3147bf9277c547 #checkpoint/3fb85b72ba9647d5ae4fe86ce1b5a885
+  fork_run_id: #c50ea2a4803944bd8521e4eab04cde60 #53261d76628841349a0d90a06261b1dc #0725a899ea34497f9d64067b20b7d9ac #5704a3bf21ec4112b6d0fa2c0ea72aa2 #ceebaff8e9964450b07fd8f0f0fc9c4f # #3fb85b72ba9647d5ae4fe86ce1b5a885
+  transfer_learning: False
   mapping_weights: 
     layer_norm_attention_src: layer_norm1
     layer_norm_attention_dest: layer_norm2
     layer_norm_attention: layer_norm1
     layer_norm_mlp: layer_norm2
-  load_weights_only: True
-  max_steps: 10000
+  load_weights_only: False
+  max_steps: 400
 
   node_loss_weights:
     MEPS:
@@ -85,7 +97,12 @@ training:
     rate: 6e-6  # local_lr
     iterations: ${training.max_steps}  # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
     min: 3e-7  # Not scaled by #GPU
-    warmup_t: 1000
+    warmup_t: 10
+
+  rollout: 
+    start: 4
+    end: 4
+    max: 4
 
   validation_metrics:
     - _target_: anemoi.training.losses.mse.WeightedMSELoss
@@ -100,17 +117,13 @@ training:
 
 dataloader:
   num_workers:
-    training: 4
-    validation: 4
+    training: 3
+    validation: 3
     test: 1
     predict: 1
   limit_batches:
-    training: null
-    validation: null
-
-  dataset_weights:
-    MEPS: 2
-    AA: 1
+    training: 100
+    validation: 10
 
   training_periods:
     MEPS:

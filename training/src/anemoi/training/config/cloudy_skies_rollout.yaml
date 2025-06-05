@@ -1,0 +1,215 @@
+defaults:
+- data: zarr
+- dataloader: native_grid
+- diagnostics: evaluation
+- hardware: slurm
+- graph: stretched_grid
+- model: graphtransformer
+- training: default
+- override hydra/hydra_logging: disabled  
+- override hydra/job_logging: disabled 
+- _self_
+- override diagnostics/plot: none
+
+
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+  - "ssrd"
+  - "strd"
+
+  normalizer:
+    max: 
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+    - "lcc"
+    - "mcc"
+    - "tcc"
+
+dataloader:
+  dataset:
+    cutout:
+    - dataset: ${hardware.paths.data}/MEPS/${hardware.files.dataset_lam}
+      trim_edge: 50
+      reorder: sort
+    - join:
+      - dataset: ${hardware.paths.data}/ERA5/${hardware.files.dataset_global_atm}
+        drop: ["sdor", "slor", "cp", "u_600", "v_600", "z_600", "t_600", "q_600", "w_600"]
+      - dataset: ${hardware.paths.data}/ERA5/${hardware.files.dataset_global_land}
+        select: ["lcc", "mcc", "tcc", "strd", "ssrd"]
+      adjust: ["start", "end"]
+      reorder: sort
+    min_distance_km: 0
+    adjust: all
+  
+  num_workers:
+    training: 2
+    validation: 2
+    test: 2
+    predict: 2
+
+  limit_batches:
+    training: 100
+    validation: 10
+    test: null
+    predict: null
+
+  batch_size:
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+
+  training:
+    start: 2020-02-01
+    end: 2022-05-31
+
+  validation:
+    start: 2022-06-01
+    end: 2023-05-31
+
+  test:
+    start: 2022-06-01
+    end: 2023-05-31
+
+
+diagnostics:
+  checkpoint:
+    every_n_minutes:
+      num_models_saved: 0
+    
+    every_n_epochs:
+      num_models_saved: 3
+
+  log:
+    mlflow:
+      enabled: True
+      offline: True
+      authentication: True
+      tracking_uri: https://mlflow.ecmwf.int
+      experiment_name: 'metno'
+      run_name: cloudy_skies_stage_D/r4
+      system: True
+ 
+hardware:
+  paths:
+    data: /pfs/lustrep4/scratch/project_465001383/aifs/dataset/
+    output: /pfs/lustrep4/scratch/project_465001383/aifs/experiments/cloudy_skies/
+    graph: /pfs/lustrep4/scratch/project_465001383/aifs/graphs/
+  files:
+    dataset_lam: aifs-meps-2.5km-2020-2023-6h-v7.zarr
+    dataset_global_atm: aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+    dataset_global_land: aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr
+    graph: n320_2_5k_cloudy_skies.pt
+  num_gpus_per_model: 8
+
+graph:
+  overwrite: False
+
+  nodes:
+    hidden:
+      node_builder:
+        lam_resolution: 10
+        global_resolution: 7
+        margin_radius_km: 11
+  
+  edges:
+  - source_name: ${graph.data}
+    target_name: ${graph.hidden}
+    edge_builders:
+    - _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
+      num_nearest_neighbours: 12 # only for cutoff method
+    attributes: ${graph.attributes.edges}
+  - source_name: ${graph.hidden}
+    # Processor configuration
+    target_name: ${graph.hidden}
+    edge_builders:
+    - _target_: anemoi.graphs.edges.MultiScaleEdges
+      x_hops: 1
+    attributes: ${graph.attributes.edges}
+  - source_name: ${graph.hidden}
+    # Decoder configuration
+    target_name: ${graph.data}
+    edge_builders:
+    - _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
+      num_nearest_neighbours: 3 # only for knn method
+    attributes: ${graph.attributes.edges}
+
+  attributes:
+    edges:
+      edge_length:
+        _target_: anemoi.graphs.edges.attributes.EdgeLength
+        norm: unit-max
+
+model:
+  num_channels: 1024
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+  
+  bounding:
+    - _target_: anemoi.models.layers.bounding.ReluBounding #[0, infinity)
+      variables:
+      - tp
+    - _target_: anemoi.models.layers.bounding.HardtanhBounding #[min_val, max_val]
+      variables:
+      - tcc
+      - mcc
+      - lcc
+      min_val: 0
+      max_val: 1
+
+training:
+  run_id: null 
+  fork_run_id: 711b2764823e4daa92ebcbfaa29cf947
+  load_weights_only: True
+  transfer_learning: True
+  max_epochs: null
+  max_steps: 100
+  lr:
+    rate: 3e-06
+    min: 8e-06
+    warmup_t: 10
+  rollout: 
+    start: 4
+    end: 4
+
+  node_loss_weights:
+    _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+    target_nodes: ${graph.data}
+    node_attribute: area_weight
+    scaled_attribute: cutout
+    weight_frac_of_total: 0.23
+

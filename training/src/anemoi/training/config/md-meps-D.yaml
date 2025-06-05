@@ -11,6 +11,7 @@ defaults:
 ### This file is for local experimentation.
 ## When you commit your changes, assign the new features and keywords
 ## to the correct defaults.
+## to the correct defaults.
 
 graph:
   overwrite: False
@@ -25,6 +26,12 @@ graph:
         margin_radius_km: 11
 
 diagnostics:
+  checkpoint:
+    every_n_minutes:
+      num_models_saved: 0
+    
+    every_n_epochs:
+      num_models_saved: 3
   log:
     mlflow:
       enabled: True
@@ -34,7 +41,7 @@ diagnostics:
       project_name: Anemoi
       log_model: False
       tracking_uri: https://mlflow.ecmwf.int
-      run_name: md-MEPS-AA-test-weighing
+      run_name: md-MEPS-rollout-4
     wandb:
       enabled: False
   print_memory_summary: True
@@ -42,7 +49,7 @@ diagnostics:
 
 hardware:
   files:
-    warm_start: null #"/pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt"
+    warm_start:  #anemoi-by_epoch-epoch_004-step_000500.ckpt #"/pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt"
   paths:
     graph: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/graphs
     output: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/output/
@@ -52,20 +59,26 @@ hardware:
 
 model:
   num_channels: 1024
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
 
 training:
   runtime: 
     _target_: anemoi.training.train.train.AnemoiMultiDomainTrainer
-  run_id: #0725a899ea34497f9d64067b20b7d9ac #checkpoint/3fb85b72ba9647d5ae4fe86ce1b5a885
-  fork_run_id: 3fb85b72ba9647d5ae4fe86ce1b5a885
-  transfer_learning: True
+  run_id: 15fbd5a935ad446885b50eb7bd400379 #6d085fe55f57441589659349ff013a8b #null  #checkpoint/3fb85b72ba9647d5ae4fe86ce1b5a885
+  fork_run_id: #1da60ad3331d476a9026970153651466 #b862ca4e2480493d9d78a9178aa1033a #b862ca4e2480493d9d78a9178aa1033a #cff80ad20bee466986d5c0c5c17ebe1a
   mapping_weights: 
     layer_norm_attention_src: layer_norm1
     layer_norm_attention_dest: layer_norm2
     layer_norm_attention: layer_norm1
     layer_norm_mlp: layer_norm2
-  load_weights_only: True
-  max_steps: 10000
+  transfer_learning: False
+  load_weights_only: False
+  max_steps: 400
 
   node_loss_weights:
     MEPS:
@@ -74,18 +87,17 @@ training:
       node_attribute: area_weight
       scaled_attribute: cutout
       weight_frac_of_total: 0.23
-    AA:
-      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
-      target_nodes: ${graph.data}
-      node_attribute: area_weight
-      scaled_attribute: cutout
-      weight_frac_of_total: 0.23
 
   lr:
-    rate: 6e-6  # local_lr
+    rate: 3e-06  # local_lr
     iterations: ${training.max_steps}  # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
-    min: 3e-7  # Not scaled by #GPU
-    warmup_t: 1000
+    min: 8e-6  # Not scaled by #GPU
+    warmup_t: 10
+  rollout: 
+    start: 4
+    end: 4
+    max: 4
+
 
   validation_metrics:
     - _target_: anemoi.training.losses.mse.WeightedMSELoss
@@ -94,29 +106,19 @@ training:
     - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
       loss_name: "MEPS"
       ignore_nans: True
-    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
-      loss_name: "AA"
-      ignore_nans: True
 
 dataloader:
   num_workers:
-    training: 4
-    validation: 4
+    training: 3
+    validation: 3
     test: 1
     predict: 1
   limit_batches:
-    training: null
-    validation: null
-
-  dataset_weights:
-    MEPS: 2
-    AA: 1
+    training: 100
+    validation: 10
 
   training_periods:
     MEPS:
-      start: 2020-02-05
-      end: 2022-05-31
-    AA:
       start: 2020-02-05
       end: 2022-05-31
 
@@ -124,15 +126,10 @@ dataloader:
     MEPS:
       start: 2022-06-01
       end: 2023-05-31
-    AA:
-      start: 2022-06-01
-      end: 2023-05-31
 
   regional_datasets:
     MEPS:
       dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-    AA:
-      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/AROME-ARCTIC/arome_arctic-2_5km-2017-2024.zarr
 
   datasets:
     cutout:

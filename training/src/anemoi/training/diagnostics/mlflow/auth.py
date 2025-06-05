@@ -196,10 +196,11 @@ class TokenAuth:
     ) -> dict:
         path = "refreshtoken"
         payload = {"refresh_token": self.refresh_token}
-
+        print(path, payload)
         try:
             response = self._request(path, payload)
         except Exception:
+            print(self._request(path, payload))
             if ignore_exc:
                 return {}
             raise
@@ -216,9 +217,10 @@ class TokenAuth:
             response = requests.post(f"{self.url}/{path}", headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             response_json = response.json()
-
+            print(response_json.get("status", ""))
             if response_json.get("status", "") != "OK":
                 error_description = response_json.get("response", "Error acquiring token.")
+                print(error_description)
                 msg = f"❌ {error_description}"
                 raise RuntimeError(msg)
 

@@ -193,6 +193,7 @@ def transfer_learning_loading(
     # Filter out layers with size mismatch
     state_dict = checkpoint["state_dict"].copy()
     model_state_dict = model.state_dict()
+    
 
     if hasattr(config.training.transfer_learning, "mapping_weights"):
         # if mapping_weights exist, the algorithm down below will
@@ -230,8 +231,10 @@ def transfer_learning_loading(
                 del state_dict[key]  # Remove the mismatched key
         
     # Load the filtered state_dict into the model
+    # print(model.load_state_dict(state_dict, strict=False))
+   
     model.load_state_dict(state_dict, strict=False)
-    
+    # print(model.load_state_dict(state_dict, strict=False))
     return model
 
 def freeze_submodule_by_name(module: nn.Module, target_name: str) -> None:

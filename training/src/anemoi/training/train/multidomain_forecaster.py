@@ -198,7 +198,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
             self.node_weights={}
             self.output_mask={}
             for graph_label, graph in graph_data.items():
-                limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph)
+                limited_area_mask[graph_label] = self.get_limited_area_mask(config, graph, graph_label)
                 self.node_weights[graph_label] = self.get_node_weights(graph_label, config, graph)
                 self.output_mask[graph_label] = Boolean1DMask(graph[config.graph.data][config.model.output_mask]) if config.model.get("output_mask", None) is not None else NoOutputMask()
                 self.node_weights[graph_label] = self.output_mask[graph_label].apply(
@@ -220,7 +220,8 @@ class MultiDomainGraphForecaster(pl.LightningModule):
     @staticmethod
     def get_limited_area_mask(
         config: DictConfig, 
-        graph: HeteroData
+        graph: HeteroData,
+        graph_label: str
     ) -> torch.Tensor:
         
         """Get stretched grid limited area mask from config
@@ -240,6 +241,9 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         if graph["hidden"].node_type == "StretchedTriNodes":
             mask_name = config.graph.nodes.hidden.node_builder.mask_attr_name
+            # if graph_label == "UWCW":
+            #     print("replacing graph label cutout with cutout_mask")
+            #     mask_name = "cutout_mask"
             return graph[config.graph.data][mask_name].squeeze().bool()
         else:
             return torch.ones((1,))
@@ -527,6 +531,9 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         assert batch_data.shape[1] >= rollout + self.multi_step, msg
 
         for rollout_step in range(rollout or self.rollout):
+            print("rollout step ", rollout_step)
+            print("rollout ", rollout)
+            print("rollout ", self.rollout)
             # prediction at rollout step rollout_step, shape = (bs, latlon, nvar)
             y_pred = self(x, graph_label)
 

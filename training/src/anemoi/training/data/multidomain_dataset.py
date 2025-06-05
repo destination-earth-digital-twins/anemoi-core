@@ -217,14 +217,28 @@ class NativeMultiGridDataset(IterableDataset):
         #     merged_date_indices.extend(valid_date_indices)
         # shard_size = len(merged_date_indices)// self.model_comm_num_groups // self.effective_bs 
         # # print("shard_size ", shard_size)
+        print("INITIALIZING WORKER INITIALIZATION (SHARDING)")
+        print("worker id", worker_id)
+        
         if self.shuffle == True:
-            total_dataset_length = self.calculate_weights(self.dataset_weights)
-            shard_size = sum(int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.dataset_weights.keys())// self.model_comm_num_groups
-        else:
+            # total_dataset_length = self.calculate_weights(self.dataset_weights)
+            # len(self.valid_date_indices[dataset_label]
+            for dataset_label in self.dataset_weights.keys():
+                print("LENGTH OF THE DATASET ", dataset_label, len(self.valid_date_indices[dataset_label]))
+                print("WEIGHTED LENGTH ", int(self.dataset_weights[dataset_label]*len(self.valid_date_indices[dataset_label])))
+        
+            print("dataset weights ", self.dataset_weights)
+            shard_size = sum(int(self.dataset_weights[dataset_label]*len(self.valid_date_indices[dataset_label])) for dataset_label in self.dataset_weights.keys())//self.model_comm_num_groups
+            # shard_size = sum(int(self.dataset_weights[dataset_label]*total_dataset_length)//self.effective_bs for dataset_label in self.dataset_weights.keys())//self.model_comm_num_groups
+        else: 
+            print("VALID DATE INDICES ", self.valid_date_indices)
             merged_date_indices = []
             for dataset_label, valid_date_indices in self.valid_date_indices.items():
                 merged_date_indices.extend(valid_date_indices)
-            shard_size = len(merged_date_indices)// self.model_comm_num_groups
+                print("merged date indices", len(merged_date_indices))
+            print("merged date indices", len(merged_date_indices))
+            shard_size = len(merged_date_indices)// (self.model_comm_num_groups)
+        print("shard size ", shard_size)
         shard_start = self.model_comm_group_id * shard_size
         shard_end = (self.model_comm_group_id + 1) * shard_size
 
@@ -272,7 +286,9 @@ class NativeMultiGridDataset(IterableDataset):
          # sample_dataset = [[k] * (len(v)//self.effective_bs) for k, v in self.valid_date_indices.items()]
         #config.dataloader.dataset weights: dictionary with graph_label:dataset_weight (in percentages adding up to 1)
         # we assume mode = oversampling for now (maybe later also undersampling?)
-        
+        assert sum(dataset_weights.values()) == 1, ("The sum of all dataset weights should be 1") # REMOVE THIS, standard weight should be 1 to match the variable weighting
+
+        # total_dataset_length = sum(len(self.valid_date_indices[dataset_label])*dataset_weight for dataset_label, dataset_weight in self.dataset_weights)
         max_dataset_label = max(self.valid_date_indices, key = lambda key: len(self.valid_date_indices[key]))
         total_dataset_length = len(self.valid_date_indices[max_dataset_label])//dataset_weights[max_dataset_label]
         
@@ -287,22 +303,25 @@ class NativeMultiGridDataset(IterableDataset):
         Currently it receives data with an ensemble dimension, which is discarded for
         now. (Until the code is "ensemble native".)
         """
-        total_dataset_length = self.calculate_weights(self.dataset_weights)
+        # TODO: make weighting optional
+        # TODO: include check: if dataset-weights does not exist, set it to 1 : 1 : 1 ....
+        # total_dataset_length = self.calculate_weights(self.dataset_weights)
+        print("VALID DATE INDICES ", self.valid_date_indices)
         if self.shuffle:
             shuffled_random_indices = []
             for dataset_label, v in self.valid_date_indices.items():
-                shuffled_random_indices.append(self.rng.choice(
-                    self.valid_date_indices[dataset_label],
-                    size=(int(self.dataset_weights[dataset_label]*total_dataset_length)),
-                    replace=True,
-                )) 
-                print("LENGTH OF THE DATASET ", dataset_label, len(self.valid_date_indices[dataset_label]))
-                print("SAMPLE SIZE FOR DATASET ", dataset_label, int(self.dataset_weights[dataset_label]*total_dataset_length))
                 # shuffled_random_indices.append(self.rng.choice(
                 #     self.valid_date_indices[dataset_label],
-                #     size=(len(self.valid_date_indices[dataset_label])//self.effective_bs, self.effective_bs),
-                #     replace=False,
+                #     size=(int(self.dataset_weights[dataset_label]*total_dataset_length)//self.effective_bs, self.effective_bs),
+                #     replace=True,
                 # )) 
+                print("LENGTH OF THE DATASET ", dataset_label, len(self.valid_date_indices[dataset_label]))
+                print("SAMPLE SIZE FOR DATASET ", dataset_label, int(self.dataset_weights[dataset_label]*len(self.valid_date_indices[dataset_label])))
+                shuffled_random_indices.append(self.rng.choice(
+                    self.valid_date_indices[dataset_label],
+                    size=int(self.dataset_weights[dataset_label]*len(self.valid_date_indices[dataset_label])),
+                    replace=True,
+                )) 
             shuffled_random_indices = np.concatenate(shuffled_random_indices, axis = 0)
             print("TOTAL DATASET LENGTH ", len(shuffled_random_indices))
             merged_random_indices = self.rng.choice(
@@ -313,16 +332,17 @@ class NativeMultiGridDataset(IterableDataset):
             shuffled_chunk_indices = shuffled_random_indices[merged_random_indices][self.chunk_index_range] 
 
             # map batch to graph 
-            sample_dataset = [[dataset_label]*int(self.dataset_weights[dataset_label]*total_dataset_length) for dataset_label in self.valid_date_indices.keys()]
+            sample_dataset = [[dataset_label]*(int(self.dataset_weights[dataset_label]*len(self.valid_date_indices[dataset_label]))) for dataset_label in self.valid_date_indices.keys()]
+            # sample_dataset = [[dataset_label]*(int(self.dataset_weights[dataset_label]*total_dataset_length)//self.effective_bs) for dataset_label in self.valid_date_indices.keys()]
             sample_dataset = np.concatenate(sample_dataset)[merged_random_indices][self.chunk_index_range]
         else:
-            # reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], (len(value)//self.effective_bs, self.effective_bs)) for value in self.valid_date_indices.values()]
-            sample_dataset = np.concatenate([[k]*len(v) for k, v in self.valid_date_indices.items()])
-            validation_date_indices = np.concatenate([v for k, v in self.valid_date_indices.items()])
-            # validation_date_indices = np.array(list(interleave(list(reshaped_date_indices))))
+            # reshaped_date_indices = [np.reshape(value[:(len(value)//self.effective_bs)*self.effective_bs], len(value)) for value in self.valid_date_indices.values()]
+            sample_dataset = [[k] * (len(v)) for k, v in self.valid_date_indices.items()]
+            # validation_date_indices = np.concatenate([v for k, v in self.valid_date_indices.items()])
+            validation_date_indices = np.array(list(interleave(list(self.valid_date_indices.values()))))
             shuffled_chunk_indices = validation_date_indices[self.chunk_index_range]
             # map batch to graph 
-            # sample_dataset = np.array(list(interleave(sample_dataset)))
+            sample_dataset = np.array(list(interleave(sample_dataset)))
             sample_dataset = sample_dataset[self.chunk_index_range]
         LOGGER.debug(
             (
@@ -341,28 +361,24 @@ class NativeMultiGridDataset(IterableDataset):
         for num, batch in enumerate(shuffled_chunk_indices):
             dataset_label = sample_dataset[num]
             print("dataset_label", dataset_label)
-            for batch_idx in range(self.effective_bs):
-                if isinstance(batch, np.ndarray):
-                    i = batch[batch_idx]
-                else:
-                    i = batch
-                start = i - (self.multi_step - 1) * self.timeincrement
-                end = i + (self.rollout + 1) * self.timeincrement
-                grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
-                if isinstance(grid_shard_indices, slice):
-                    # Load only shards into CPU memory
-                    print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
-                    x = self.data[dataset_label][start : end : self.timeincrement, :, :, grid_shard_indices]
-                else:
-                    # Load full grid in CPU memory, select grid_shard after
-                    # Note that anemoi-datasets currently doesn't support slicing + indexing
-                    # in the same operation.
-                    x = self.data[dataset_label][start : end : self.timeincrement, :, :, :]
-                    x = x[..., grid_shard_indices]  # select the grid shard
-                x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
-                self.ensemble_dim = 1
+            i = batch
+            start = i - (self.multi_step - 1) * self.timeincrement
+            end = i + (self.rollout + 1) * self.timeincrement
+            grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
+            if isinstance(grid_shard_indices, slice):
+                # Load only shards into CPU memory
+                print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
+                x = self.data[dataset_label][start : end : self.timeincrement, :, :, grid_shard_indices]
+            else:
+                # Load full grid in CPU memory, select grid_shard after
+                # Note that anemoi-datasets currently doesn't support slicing + indexing
+                # in the same operation.
+                x = self.data[dataset_label][start : end : self.timeincrement, :, :, :]
+                x = x[..., grid_shard_indices]  # select the grid shard
+            x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
+            self.ensemble_dim = 1
 
-                yield torch.from_numpy(x), dataset_label
+            yield torch.from_numpy(x), dataset_label
 
     def __repr__(self) -> str:
         return f"""

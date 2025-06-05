@@ -1,0 +1,356 @@
+defaults:
+- data: zarr
+- dataloader: multi_domain
+- diagnostics: evaluation
+- hardware: slurm
+- graph: multi_domain_stretch
+- model: dynamic_graphtransformer
+- training: default
+- _self_
+
+
+### This file is for local experimentation.
+##  When you commit your changes, assign the new features and keywords
+##  to the correct defaults.
+# For example to change from default GPU count:
+# hardware:
+#   num_gpus_per_node: 1
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+
+  normalizer:
+    default: "mean-std"
+    std:
+    - "tp"
+    min-max:
+    max:
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+
+graph:
+  overwrite: False
+  nodes:
+    hidden:
+      node_builder:
+        _target_: anemoi.graphs.nodes.StretchedTriNodes
+        lam_resolution: 10
+        global_resolution: 7
+        reference_node_name: ${graph.data}
+        mask_attr_name: cutout
+        margin_radius_km: 11
+
+diagnostics:
+  log:
+    mlflow:
+      enabled: False
+      offline: True
+      authentication: True
+      experiment_name: 'multi-domain-experiments'
+      project_name: 'Anemoi'
+      log_model: False
+      tracking_uri: 'https://mlflow.ecmwf.int'
+      run_name: md-uwcw-meps-aa
+    wandb:
+      enabled: False
+  print_memory_summary: True
+
+hardware:
+  paths:
+    checkpoints: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/checkpoints/
+    output: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/output/
+    logs:
+      base: ${hardware.paths.output}logs/
+      wandb: ${hardware.paths.logs.base}
+      mlflow: ${hardware.paths.logs.base}mlflow/
+      tensorboard: ${hardware.paths.logs.base}tensorboard/
+    #graph: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/cloudy-skies-exp/graphs/
+    graph: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/graphs/
+  files: 
+    warm_start: KNMI_CERRA_o96_5.5km_5_9_ch1024-epoch_082-step_260000.ckpt
+    # warm_start: /pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt
+    # warm_start: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/output/checkpoint/e659e66325464922979909ad7b451d44/anemoi-by_time-epoch_029-step_011774.ckpt
+    # warm_start: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/cloudy-skies-exp/output/fc6h/c1024b16/checkpoint/e0ac0b53da2e4d4a8b1332bdc8aa1f1a/last.ckpt ## WATCH OUT THIS IS CLOUDY SKIES CHECKPOINT #####
+  num_gpus_per_node: 8
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: 8
+model:
+  num_channels: 1024
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0 # GNN and GraphTransformer Processor only
+  # bounding:
+  #   - _target_: anemoi.models.layers.bounding.ReluBounding #[0, infinity)
+  #     variables:
+  #     - tp
+
+
+training:
+  runtime: 
+    _target_: anemoi.training.train.train.AnemoiMultiDomainTrainer
+  fork_run_id: e84faa38f4834407a184a6fceff28328
+  node_loss_weights:
+    UWCW:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.25
+      node_attribute: area_weight
+    MEPS:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+      node_attribute: area_weight
+    AA:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+      node_attribute: area_weight
+  run_id: 
+  mapping_weights: 
+    layer_norm_attention_src: layer_norm1
+    layer_norm_attention_dest: layer_norm2
+    layer_norm_attention: layer_norm1
+    layer_norm_mlp: layer_norm2
+  transfer_learning: True
+  load_weights_only: True
+  max_steps: 18000
+
+  lr:
+    rate: 7.5e-6  #8 * 0.625e-4
+    # min: 2.4e-6 #8 * 3e-7
+    min: 3e-7
+    iterations: ${training.max_steps}
+    warmup_t: 10
+
+  validation_metrics: 
+    - _target_: anemoi.training.losses.mse.WeightedMSELoss
+      # Scalars to include in loss calculation
+      # Cannot scale over the variable dimension due to possible remappings.
+      # Available scalars include:  
+      # - 'loss_weights_mask': Giving imputed NaNs a zero weight in the loss function
+      # Use the `scale_validation_metrics` section to variable scale.
+      scalars: []
+      # other kwargs
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "MEPS"
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "AA"
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "UWCW"
+      ignore_nans: True
+
+dataloader:
+  num_workers:
+    training: 1
+    validation: 1
+    test: 1
+  batch_size:
+    training: 1
+    validation: 1
+    test: 1
+  limit_batches:
+    training: null
+    validation: null
+  dataset_weights:
+    MEPS: 0.33
+    UWCW: 0.33
+    AA: 0.34
+  training_periods:
+    UWCW:
+      start: null
+      end: 2022-09-30
+    MEPS:
+      start: 2020-02-05
+      end: 2022-05-31
+    AA:
+      start: 2020-02-05
+      end: 2022-05-31
+      
+  validation_periods:
+    UWCW:
+      start: 2022-10-01 
+      end: 2023-09-30
+    MEPS:
+      start: 2022-06-01
+      end: 2023-05-31
+    AA:
+      start: 2022-06-01
+      end: 2023-05-31
+
+  regional_datasets:
+    UWCW: 
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/UWC_WEST/uwcwest-rr-an-oper-0001-mars-2p0km-2020-2023-6h-v2-knmi.zarr
+      drop:
+      - q_600
+      - t_600
+      - u_600
+      - v_600
+      - z_600
+      - w_50
+      - w_100
+      - w_150
+      - w_200
+      - w_250
+      - w_300
+      - w_400
+      - w_500
+      - w_600
+      - w_700
+      - w_850
+      - w_925
+      - w_1000
+    MEPS: 
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2023-6h-v7.zarr
+      drop:
+        - w_50
+        - w_100
+        - w_150
+        - w_200
+        - w_250
+        - w_300
+        - w_400
+        - w_500
+        - w_700
+        - w_850
+        - w_925
+        - w_1000
+        - tcw
+    AA:
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/AROME-ARCTIC/arome_arctic-2_5km-2017-2024.zarr
+      drop:
+        - w_50
+        - w_100
+        - w_150
+        - w_200
+        - w_250
+        - w_300
+        - w_400
+        - w_500
+        - w_700
+        - w_850
+        - w_925
+        - w_1000
+        - tcw      
+  datasets:
+    cutout:
+      - dataset: None
+        # select: ${dataloader.datasets.reorder}
+      - dataset: ${hardware.paths.data}${hardware.files.dataset}
+        # select: ${dataloader.datasets.reorder}
+    adjust: all
+    reorder:
+      - 10u
+      - 10v
+      - 2d
+      - 2t
+      - cos_julian_day
+      - cos_latitude
+      - cos_local_time
+      - cos_longitude
+      - insolation
+      - lsm
+      - msl
+      - q_100
+      - q_1000
+      - q_150
+      - q_200
+      - q_250
+      - q_300
+      - q_400
+      - q_50
+      - q_500
+      - q_700
+      - q_850
+      - q_925
+      - sin_julian_day
+      - sin_latitude
+      - sin_local_time
+      - sin_longitude
+      - skt
+      - sp
+      - t_100
+      - t_1000
+      - t_150
+      - t_200
+      - t_250
+      - t_300
+      - t_400
+      - t_50
+      - t_500
+      - t_700
+      - t_850
+      - t_925
+      - tp
+      - u_100
+      - u_1000
+      - u_150
+      - u_200
+      - u_250
+      - u_300
+      - u_400
+      - u_50
+      - u_500
+      - u_700
+      - u_850
+      - u_925
+      - v_100
+      - v_1000
+      - v_150
+      - v_200
+      - v_250
+      - v_300
+      - v_400
+      - v_50
+      - v_500
+      - v_700
+      - v_850
+      - v_925
+      - z_100
+      - z_1000
+      - z_150
+      - z_200
+      - z_250
+      - z_300
+      - z_400
+      - z_50
+      - z_500
+      - z_700
+      - z_850
+      - z_925
+      - z
+    min_distance_km: 0
+    statistics: ${hardware.paths.data}${hardware.files.dataset}
