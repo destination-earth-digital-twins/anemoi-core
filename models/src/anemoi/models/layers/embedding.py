@@ -46,12 +46,12 @@ class DynamicalVariableEmbedding(nn.Module):
         )
         self.mlp = nn.Sequential(
             nn.Linear(1, out_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(out_channels, out_channels),
         )
         self.norm = nn.LayerNorm(out_channels)
         self.mask_token = nn.Parameter(torch.randn(out_channels))
-        self.linear = nn.Linear(out_channels, 1)
+        # self.linear = nn.Linear(out_channels, 1)
 
     def forward(
         self,
@@ -68,6 +68,8 @@ class DynamicalVariableEmbedding(nn.Module):
         args:
             x (torch.Tensor): Input tensor of shape (B*E*G, V*T).
             presence_tensor (torch.Tensor): Presence tensor of shape (B*E*G, V*T).
+        returns:
+            torch.Tensor: Output tensor of shape (B*E*G, V*T, out_channels).
 
         """
         multi_step = x.shape[-1] // len(self.data_indices)
@@ -88,7 +90,7 @@ class DynamicalVariableEmbedding(nn.Module):
             "(BGE) var time channels -> (BGE) (var time) channels",
         )
 
-        return self.linear(out).squeeze(-1)
+        return out  # self.linear(out).squeeze(-1)
 
 
 if __name__ == "__main__":
