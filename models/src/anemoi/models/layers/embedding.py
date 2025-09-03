@@ -6,6 +6,7 @@ import einops
 class DynamicalVariableEmbedding(nn.Module):
     def __init__(
         self,
+        embedding_indices: dict[str, int],
         data_indices: dict[str, int],
         in_channels: int,
         hidden_channels: int = 64,
@@ -14,7 +15,8 @@ class DynamicalVariableEmbedding(nn.Module):
         """
         A PyTorch module that embeds dynamical variables using an embedding layer
         Args:
-            data_indices (dict or int): A dictionary mapping variable names to their indices.
+            embedding_indices (dict or int): A dictionary mapping variable names to their embedding indices.
+            data_indices (dict): A dictionary mapping variable names to their data indices.
             in_channels (int): Number of input channels.
             hidden_channels (int): Number of hidden channels in the MLP.
             out_channels (int): Number of output channels for the embeddings.
@@ -24,7 +26,8 @@ class DynamicalVariableEmbedding(nn.Module):
         """
         super().__init__()
 
-        assert isinstance(data_indices, (dict, int)), "Invalid data_indices"
+        assert isinstance(embedding_indices, (dict, int)), "Invalid embedding indices"
+        assert isinstance(data_indices, (dict, int)), "Invalid data indices"
         assert isinstance(in_channels, int) and in_channels > 0, "Invalid in_channels"
         assert (
             isinstance(hidden_channels, int) and hidden_channels > 0
@@ -32,16 +35,16 @@ class DynamicalVariableEmbedding(nn.Module):
         assert (
             isinstance(out_channels, int) and out_channels > 0
         ), "Invalid out_channels"
-
+        self.embdding_indices = embedding_indices
         self.data_indices = data_indices
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        var_id = torch.tensor(list(data_indices.values()), dtype=torch.long)
+        var_id = torch.tensor(list(embedding_indices.values()), dtype=torch.long)
         self.register_buffer("var_id", var_id, persistent=False)
 
         self.embeddings = nn.Embedding(
-            len(data_indices),
+            len(embedding_indices),
             out_channels,
         )
         self.mlp = nn.Sequential(
@@ -72,7 +75,8 @@ class DynamicalVariableEmbedding(nn.Module):
             torch.Tensor: Output tensor of shape (B*E*G, V*T, out_channels).
 
         """
-        multi_step = x.shape[-1] // len(self.data_indices)
+        # subtracting 4 which represents cosine sine of lat/lon
+        multi_step = (x.shape[-1] - 4) // len(self.data_indices)
         x_raw = x.view(x.shape[0], len(self.data_indices), multi_step, 1)
 
         embbed_variable_id = self.embeddings(self.var_id).unsqueeze(0).unsqueeze(-2)
