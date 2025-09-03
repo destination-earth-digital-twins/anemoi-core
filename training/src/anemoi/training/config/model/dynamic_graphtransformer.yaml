@@ -1,3 +1,6 @@
+defaults:
+  - misc: dynamic_embedding
+
 activation: GELU
 num_channels: 128
 node_dim: 4 
