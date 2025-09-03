@@ -1,0 +1,6 @@
+dynamic_embedding:
+  __target__: anemoi.models.layers.embedding.dynamic.DynamicEmbedding
+  __convert__: all
+  #in_channels: 1
+  hidden_channels: 64
+  out_channels: 32
