@@ -52,8 +52,12 @@ class BaseNodeBuilder(ABC):
         HeteroData
             The graph with the registered nodes.
         """
+        print(f"Registering nodes of type {self.name} in the graph.")
+        print(f"graph", graph)
         graph[self.name].x = self.get_coordinates()
         graph[self.name].node_type = type(self).__name__
+        print(graph)
+        print("node type", graph[self.name].node_type)
         return graph
 
     def register_attributes(self, graph: HeteroData, config: DotDict | None = None) -> HeteroData:

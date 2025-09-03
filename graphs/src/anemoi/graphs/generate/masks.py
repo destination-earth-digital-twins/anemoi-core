@@ -55,6 +55,8 @@ class KNNAreaMaskBuilder:
 
     def get_reference_coords(self, graph: HeteroData) -> np.ndarray:
         """Retrive coordinates from the reference nodes."""
+        print("graph node types", graph.node_types)
+        print("graph", graph)
         assert (
             self.reference_node_name in graph.node_types
         ), f'Reference node "{self.reference_node_name}" not found in the graph.'
@@ -77,9 +79,10 @@ class KNNAreaMaskBuilder:
         """Fit the KNN model to the nodes of interest."""
         # Prepare string for logging
         reference_mask_str = self.reference_node_name
+        print(f"reference_mask_str: {reference_mask_str}")
         if self.mask_attr_name is not None:
             reference_mask_str += f" ({self.mask_attr_name})"
-
+        print("graph", graph)
         # Fit to the reference nodes
         coords_rad = self.get_reference_coords(graph)
         self.fit_coords(coords_rad)

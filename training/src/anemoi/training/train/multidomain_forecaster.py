@@ -171,7 +171,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
         self.reader_group_rank = 0
 
     def forward(self, x: torch.Tensor, graph_label: str) -> torch.Tensor:
-        return self.model(x,graph_label, self.model_comm_group)
+        return self.model(x, graph_label, self.model_comm_group)
 
     def get_loss_kwargs(
         self,
@@ -608,6 +608,7 @@ class MultiDomainGraphForecaster(pl.LightningModule):
 
         tensor_list = [torch.empty(tuple(shard_shape), device=self.device) for _ in range(self.reader_group_size - 1)]
         tensor_list.append(torch.empty(last_shard_shape, device=self.device))
+        # print(batch_data.shape, tensor_list[0].shape, tensor_list[-1].shape)
         torch.distributed.all_gather(
             tensor_list,
             batch_data,

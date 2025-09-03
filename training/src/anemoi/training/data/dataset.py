@@ -279,6 +279,10 @@ class NativeGridDataset(IterableDataset):
             end = i + (self.rollout + 1) * self.timeincrement
 
             grid_shard_indices = self.grid_indices.get_shard_indices(self.reader_group_rank)
+            print('before transformation')
+            print(len(self.data))
+            print(len(self.data[0]))
+            print(type(self.data))
             if isinstance(grid_shard_indices, slice):
                 # Load only shards into CPU memory
                 x = self.data[start : end : self.timeincrement, :, :, grid_shard_indices]
@@ -288,6 +292,12 @@ class NativeGridDataset(IterableDataset):
                 # in the same operation.
                 x = self.data[start : end : self.timeincrement, :, :, :]
                 x = x[..., grid_shard_indices]  # select the grid shard
+            print("after transformation")
+            print(len(x))
+            print(len(x[0]))
+            print(type(self.data))
+            if self.shuffle == True:
+                x = np.array(x)[0]
             x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
             self.ensemble_dim = 1
 

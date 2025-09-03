@@ -1,0 +1,281 @@
+defaults:
+  - data: zarr
+  - dataloader: native_grid
+  - diagnostics: evaluation
+  - hardware: slurm
+  - graph: multi_scale
+  - model: graphtransformer
+  - training: default
+  - _self_
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+### This file is for local experimentation.
+## When you commit your changes, assign the new features and keywords
+## to the correct defaults.
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+
+  normalizer:
+    max: 
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+
+graph:
+  overwrite: False
+  clobber: False
+  # graph already built separate graph build
+  # for SG and global is not yet implemented
+  # has to be defined prior.
+
+diagnostics:
+  log:
+    mlflow:
+      enabled: True
+      offline: True
+      authentication: True
+      experiment_name: metno #multi-domain-experiments
+      project_name: Anemoi
+      log_model: False
+      tracking_uri: https://mlflow.ecmwf.int
+      run_name: article-md-o96-pretraining #md-cloudy-skies
+    wandb:
+      enabled: False
+  print_memory_summary: True
+  show_entire_globe: False
+
+hardware:
+  files:
+    warm_start: null 
+    graph: o96.pt
+  paths:
+    graph: /pfs/lustrep4/scratch/project_465000527/multi-domain/article/graphs/
+    output: /pfs/lustrep4/scratch/project_465000527/multi-domain/article/experiments/output/md-c1024/ 
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: 1 #${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+
+model:
+  num_channels: 1024
+  processor:
+    num_layers: 16
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+
+training:
+  #mapping_weights: 
+  #  layer_norm_attention_src: layer_norm1
+  #  layer_norm_attention_dest: layer_norm2
+  #  layer_norm_attention: layer_norm1
+  #  layer_norm_mlp: layer_norm2
+  # choose normal anemoi runtime or multi-domain
+  runtime:
+    # alternatives: AnemoiTrainer | AnemoiMultiDomainTrainer
+    _target_: anemoi.training.train.train.AnemoiTrainer
+
+  run_id: null 
+  fork_run_id: null 
+  transfer_learning: False
+  load_weights_only: False
+  max_steps: 250000
+
+  node_loss_weights:
+    _target_: anemoi.training.losses.nodeweights.GraphNodeAttribute
+    target_nodes: ${graph.data}
+    node_attribute: area_weight
+
+  lr:
+    rate: 6.25e-05  # local_lr
+    iterations: ${training.max_steps}  # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
+    min: 3e-7  # Not scaled by #GPU
+    warmup_t: 1000
+
+  validation_metrics:
+    - _target_: anemoi.training.losses.mse.WeightedMSELoss
+      scalars: []
+      ignore_nans: True
+
+dataloader:
+  num_workers:
+    training: 4
+    validation: 4
+    test: 1
+    predict: 1
+  batch_size: # sharding does not support batch_size > 1
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+  limit_batches:
+    training: null
+    validation: null
+
+  dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+
+  training:
+    concat:
+    - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+      start: 1979-01-01
+      end: 2011-12-31
+    - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+      start: 2013-01-01
+      end: 2021-09-29
+
+    frequency: 6h
+    fill_missing_gaps: true
+    drop:
+      - sdor
+      - slor
+      - cp
+      - tcw
+      - u_50
+      - u_250
+      - u_600
+      - v_50
+      - v_250
+      - v_600
+      - z_50
+      - z_250
+      - z_600
+      - t_50
+      - t_250
+      - t_600
+      - q_50
+      - q_250
+      - q_600
+      - w_50
+      - w_250
+      - w_600
+
+    reorder: sort
+
+  validation:
+    concat:
+    - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+      start: 2012-01-01
+      end: 2012-12-31
+    - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+      start: 2021-09-30
+      end: 2022-09-30
+
+    frequency: 6h
+    fill_missing_gaps: true
+    drop:
+      - sdor
+      - slor
+      - cp
+      - tcw
+      - u_50
+      - u_250
+      - u_600
+      - v_50
+      - v_250
+      - v_600
+      - z_50
+      - z_250
+      - z_600
+      - t_50
+      - t_250
+      - t_600
+      - q_50
+      - q_250
+      - q_600
+      - w_50
+      - w_250
+      - w_600
+
+    reorder: sort
+  # training:
+  #   #concat:
+  #   #  - dataset: ${dataloader.dataset}
+  #   #    start: 1979-01-01
+  #   #    end: 2011-12-31
+  #   #    drop:  ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   #    reorder: sort
+  #   #  - dataset: ${dataloader.dataset}
+  #   #    start: 2013-01-01 
+  #   #    end: 2022-09-29
+  #   #     drop:  ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   #     reorder: sort
+  #   # #frequency: ${data.frequency}
+  #   # fill_missing_gaps: True # Fills the gaps with "imaginary dates", cannot be accessed but handled by anemoi.
+  #   concat:
+  #     - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+  #       start: 1979-01-01
+  #       end: 2011-12-31
+  #       drop: [sdor, slor, cp, tcw, u_50, u_250, u_600, v_50, v_250, v_600, z_50, z_250, z_600, t_50, t_250, t_600, q_50, q_250, q_600, w_50, w_250, w_600]
+  #       frequency: ${data.frequency}
+  #       reorder: sort
+  #     - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+  #       start: 2013-01-01
+  #       end: 2021-09-29
+  #       drop: [sdor, slor, cp, tcw, u_50, u_250, u_600, v_50, v_250, v_600, z_50, z_250, z_600, t_50, t_250, t_600, q_50, q_250, q_600, w_50, w_250, w_600]
+  #       frequency: ${data.frequency}
+  #       reorder: sort
+  #   fill_missing_gaps: True
+
+  # validation:
+  #   # concat:
+  #   #   - dataset: ${dataloader.dataset}
+  #   #     start: 2012-01-01
+  #   #     end: 2012-12-31
+  #   #     drop:  ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   #     reorder: sort
+  #   #   - dataset: ${dataloader.dataset}
+  #   #     start: 2022-09-30 
+  #   #     end: 2023-09-30
+  #   #     drop:  ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   #     reorder: sort
+  #   # #frequency: ${data.frequency}
+  #   # fill_missing_gaps: True # Fills the gaps with "imaginary dates", cannot be accessed but handled by anemoi.
+  #   concat:
+  #     - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+  #       start: 2012-01-01
+  #       end: 2012-12-31
+  #       drop: [sdor, slor, cp, tcw, u_50, u_250, u_600, v_50, v_250, v_600, z_50, z_250, z_600, t_50, t_250, t_600, q_50, q_250, q_600, w_50, w_250, w_600]
+  #       frequency: ${data.frequency}
+  #       reorder: sort
+  #     - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+  #       start: 2021-09-30
+  #       end: 2022-09-30
+  #       drop: [sdor, slor, cp, tcw, u_50, u_250, u_600, v_50, v_250, v_600, z_50, z_250, z_600, t_50, t_250, t_600, q_50, q_250, q_600, w_50, w_250, w_600]
+  #       frequency: ${data.frequency}
+  #       reorder: sort
+  #   fill_missing_gaps: True
+
+

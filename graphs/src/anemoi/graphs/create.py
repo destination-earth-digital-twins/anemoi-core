@@ -77,6 +77,7 @@ class GraphCreator:
             The updated graph with new nodes and edges added based on the configuration.
         """
         for nodes_name, nodes_cfg in self.config.get("nodes", {}).items():
+            print(f"Instantiating nodes of type {nodes_name} in the graph.")
             graph = instantiate(nodes_cfg.node_builder, name=nodes_name).update_graph(
                 graph, attrs_config=nodes_cfg.get("attributes", {})
             )

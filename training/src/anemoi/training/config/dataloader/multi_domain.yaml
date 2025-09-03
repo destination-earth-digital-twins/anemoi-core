@@ -131,48 +131,48 @@ select:
       - "sin_julian_day"
       - "sin_local_time"
       - "insolation"
-#new
-training_periods:
-  MEPS:
-    start: 2020-02-05 
-    end: 2023-05-31
-  ARA:
-    start: 2012-01-01
-    end: 2015-12-31
+# #new
+# training_periods:
+#   MEPS:
+#     start: 2020-02-05 
+#     end: 2023-05-31
+#   # ARA:
+#   #   start: 2012-01-01
+#   #   end: 2015-12-31
 
-#new
-validation_periods:
-  MEPS:
-    start: 2023-06-01
-    end: 2024-05-31
-  ARA:
-    start: 2016-01-01
-    end: 2016-12-31
+# #new
+# validation_periods:
+#   MEPS:
+#     start: 2023-06-01
+#     end: 2024-05-31
+#   # ARA:
+#   #   start: 2016-01-01
+#   #   end: 2016-12-31
 
-# new
-regional_datasets:
-  MEPS: 
-    dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
-  ARA: 
-    dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20181231-3h-v7.zarr
+# # new
+# regional_datasets:
+#   MEPS: 
+#     dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2024-6h-v6.zarr
+#   # ARA: 
+#   #   dataset: /pfs/lustrep4/scratch/project_465000527/ARA_Data/Zarr/aut-rd-an-oper-0001-ara-2p5km-20120101_20181231-3h-v7.zarr
 
-global:         
-  concat:
-    - dataset: ${hardware.paths.data}/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
-      start: null
-      end: 2021-12-31
-    - dataset: ${hardware.paths.data}/aifs-od-an-oper-0001-mars-o96-2016-2023-6h-v6.zarr
-      start: 2022-01-01
-      end: 2023-12-31
-#new
-datasets:
-  cutout:
-    - dataset: null 
-      select: ${dataloader.select}
-    - dataset: ${dataloader.global}
-      select: ${dataloader.select}
-  adjust: ["all"]
-  statistics: ${hardware.paths.data}/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+# global:         
+#   concat:
+#     - dataset: ${hardware.paths.data}/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
+#       start: null
+#       end: 2021-12-31
+#     - dataset: ${hardware.paths.data}/aifs-od-an-oper-0001-mars-o96-2016-2023-6h-v6.zarr
+#       start: 2022-01-01
+#       end: 2023-12-31
+# #new
+# datasets:
+#   cutout:
+#     - dataset: null 
+#       select: ${dataloader.select}
+#     - dataset: ${dataloader.global}
+#       select: ${dataloader.select}
+#   adjust: ["all"]
+#   statistics: ${hardware.paths.data}/aifs-ea-an-oper-0001-mars-o96-1979-2022-6h-v6.zarr
 
 # graph_datasets: 
 #   MEPS:

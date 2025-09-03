@@ -25,6 +25,7 @@ class ProcessConfigs:
             filename = deepcopy(args).pop("dataset")
 
             training_struct = deepcopy(self.training_struct)
+            print("training_struct", training_struct["dataset"])
             training_struct["dataset"]["cutout"][0]["dataset"] = filename
             training_struct["start"] = self.training_periods[region]["start"]
             training_struct["end"] = self.training_periods[region]["end"]
@@ -38,6 +39,7 @@ class ProcessConfigs:
                 "end" : self.config["dataloader"]["training_periods"]["ERA5"]["end"]
             }
             training_dataloader_config["ERA5"] = global_struct 
+        print("training dataloader config", training_dataloader_config)
         self.dataloader_config["training"] = training_dataloader_config.copy()
 
 

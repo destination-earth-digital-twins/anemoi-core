@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import logging
+import pathlib
 from pathlib import Path
 
 import torch
@@ -189,19 +190,44 @@ def transfer_learning_loading(
         ckpt_path: Path | str
         ) -> nn.Module:
     # Load the checkpoint
+    # print("checkpoint path: ", ckpt_path)
+    # unsafe_globals = torch.serialization.get_unsafe_globals_in_checkpoint(ckpt_path)
+    # print("unsafe globals: ", unsafe_globals)
+    # import pkg_resources, subprocess, sys
+
+    # modules   = unsafe_globals
+    # required  = {m.split('.')[0] for m in modules}
+    # print("required packages: ", required)
+    # installed = {pkg.key for pkg in pkg_resources.working_set}
+    # print("installed packages: ", installed)
+    # missing   = required - installed
+    # print("missing packages: ", missing)
+
+    # if missing:
+    #     subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', 'pip'])
+    #     subprocess.check_call([sys.executable, '-m', 'pip', 'install', *missing])
+
+    # for module in set.union(required, modules):
+    #     globals()[module] = __import__(module)
+    #     # for p in packages:
+        #     tmp = tmp.getattr(tmp, p)
+        #     print("imported: ", tmp)
+    # torch.serialization.add_safe_globals(globals().values())
     checkpoint = torch.load(ckpt_path, map_location=model.device)
     # Filter out layers with size mismatch
     state_dict = checkpoint["state_dict"].copy()
+    # print("state_dict keys: ", state_dict.keys())
     model_state_dict = model.state_dict()
-
-    if hasattr(config.training.transfer_learning, "mapping_weights"):
+    # print("mapping weights: ", config.training.mapping_weights)
+    if hasattr(config.training, "mapping_weights"):
         # if mapping_weights exist, the algorithm down below will
         # try to rename and inject the corresponding weight into the 
         # new state_dict.
-        mapping = config.training.transfer_learning.mapping
+        mapping = config.training.mapping_weights
         LOGGER.info("Detected mapping_weights key. Starting to map weights")
 
         for state_key in list(model_state_dict.keys()):
+            print(f"Checking key: {state_key}")
             if state_key not in state_dict:
                 LOGGER.info(f"key: {state_key} is not present in checkpoint.")
                 new_key = state_key
@@ -220,6 +246,8 @@ def transfer_learning_loading(
                             LOGGER.info(f"Warning! Shape mismatch: {old_key}: {state_dict[old_key].shape} | {state_key}: {model_state_dict[state_key].shape}")
                             LOGGER.info(f"Removing key: {old_key} from state_dict")
                             del state_dict[old_key]
+            else:
+                LOGGER.info(f"Key {state_key} found in checkpoint. No mapping needed.")
     else:
         for key in state_dict.copy():
             if key in model_state_dict and state_dict[key].shape != model_state_dict[key].shape:

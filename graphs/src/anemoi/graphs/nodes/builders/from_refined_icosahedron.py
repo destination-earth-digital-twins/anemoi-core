@@ -172,7 +172,9 @@ class StretchedIcosahedronNodes(IcosahedralNodes):
         self.area_mask_builder = KNNAreaMaskBuilder(reference_node_name, margin_radius_km, mask_attr_name)
 
     def register_nodes(self, graph: HeteroData) -> None:
+        print("graph", graph)
         self.area_mask_builder.fit(graph)
+        
         return super().register_nodes(graph)
 
 

@@ -127,26 +127,32 @@ class AnemoiTrainer:
 
         Creates the graph in all workers.
         """
+        print('graph config', self.config.hardware.files.graph)
         if self.config.hardware.files.graph is not None:
             graph_filename = Path(
                 self.config.hardware.paths.graph,
                 self.config.hardware.files.graph,
             )
-
+            print('graph_filename', graph_filename)
+            print('overwrite', self.config.graph.overwrite)
             if graph_filename.exists() and not self.config.graph.overwrite:
                 LOGGER.info("Loading graph data from %s", graph_filename)
-                return torch.load(graph_filename,weights_only=False)
+                graph = torch.load(graph_filename, weights_only=False)
 
         else:
             graph_filename = None
 
         from anemoi.graphs.create import GraphCreator
+        from anemoi.graphs.nodes import ZarrDatasetNodes
 
         graph_config = DotDict(OmegaConf.to_container(self.config.graph, resolve=True))
-        return GraphCreator(config=graph_config).create(
-            save_path=graph_filename,
-            overwrite=self.config.graph.overwrite,
-        )
+        graph = ZarrDatasetNodes(self.config.dataloader.training, name=self.config.graph.data).update_graph(HeteroData(), attrs_config=graph_config.attributes.nodes) #empty graph
+        gc = GraphCreator(config=graph_config)
+        graph = gc.update_graph(graph)
+        graph = gc.clean(graph)
+        # TODO: check if the graphs gets updated
+        gc.save(graph, graph_filename, overwrite=True)
+        return graph
 
     @cached_property
     def model(self) -> GraphForecaster:
@@ -164,9 +170,10 @@ class AnemoiTrainer:
 
         if self.load_weights_only:
             # Sanify the checkpoint for transfer learning
+            print("transfer learning", self.config.training.transfer_learning)
             if self.config.training.transfer_learning:
                 LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
-                return transfer_learning_loading(model, self.last_checkpoint)
+                return transfer_learning_loading(self.config, model, self.last_checkpoint)
 
             LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
 
@@ -227,6 +234,8 @@ class AnemoiTrainer:
         )
 
         # Check if the last checkpoint exists
+        print('checkpoint', checkpoint)
+        print('checkpoint exists', Path(checkpoint).exists())
         if Path(checkpoint).exists():
             LOGGER.info("Resuming training from last checkpoint: %s", checkpoint)
             return checkpoint
@@ -493,7 +502,13 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
                 self.config.hardware.paths.graph,
                 graph_label + ".pt",
             )
+            print('graph_filename', graph_filename)
             # True False -> False
+            if type(self.config.hardware.files.graph)== dict:
+                graph_filename = Path(
+                    self.config.hardware.paths.graph,
+                    self.config.hardware.files.graph[graph_label] + ".pt",
+                )
             if graph_filename.exists() and not self.config.graph.overwrite:
                 LOGGER.info("Loading graph data from %s", graph_filename)
                 graph = torch.load(graph_filename, weights_only=False)
@@ -554,18 +569,19 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(anemoi_config: DictConfig) -> None:
 
-    try:
-        anemoi_trainer = hydra.utils.instantiate(
-            anemoi_config.training.runtime,
-            anemoi_config=anemoi_config,
-            _recursive_=False
-            )
-        anemoi_trainer.train()
-    except Exception as e:
-        LOGGER.error(
-            "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
-            anemoi_config.training.runtime
+    # try:
+    print("trainer", anemoi_config.training.runtime)
+    anemoi_trainer = hydra.utils.instantiate(
+        anemoi_config.training.runtime,
+        anemoi_config=anemoi_config,
+        _recursive_=False
         )
+    anemoi_trainer.train()
+    # except Exception as e:
+    #     LOGGER.error(
+    #         "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
+    #         anemoi_config.training.runtime
+    #     )
 
 
 

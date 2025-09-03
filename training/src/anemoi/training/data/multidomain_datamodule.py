@@ -138,15 +138,15 @@ class AnemoiMultiDomainDataModule(pl.LightningDataModule):
     @cached_property
     def ds_valid(self) -> NativeMultiGridDataset:
         r = max(self.rollout, self.config.dataloader.get("validation_rollout", 1))
-        resolved_dataloader_conf = OmegaConf.to_container(self.config.dataloader, resolve = True)
-        for dataset_label in resolved_dataloader_conf["training"]:
-            if not resolved_dataloader_conf["training"][dataset_label]["end"] < resolved_dataloader_conf["validation"][dataset_label]["start"]:
-                LOGGER.warning(
-                    "Training end date %s is not before validation start date %s for dataset %s.",
-                    self.config.dataloader.training.end,
-                    self.config.dataloader.validation.start,
-                    dataset_label,
-                )
+        # resolved_dataloader_conf = OmegaConf.to_container(self.config.dataloader, resolve = True)
+        # for dataset_label in resolved_dataloader_conf["training"]:
+        #     if not resolved_dataloader_conf["training"][dataset_label]["end"] < resolved_dataloader_conf["validation"][dataset_label]["start"]:
+        #         LOGGER.warning(
+        #             "Training end date %s is not before validation start date %s for dataset %s.",
+        #             self.config.dataloader.training.end,
+        #             self.config.dataloader.validation.start,
+        #             dataset_label,
+        #         )
         return self._get_dataset(
             #open_dataset(
             OmegaConf.to_container(self.config.dataloader.validation, resolve=True),

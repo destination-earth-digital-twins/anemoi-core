@@ -24,21 +24,20 @@ from pytorch_lightning.utilities import rank_zero_only
 from rich.console import Console
 
 if TYPE_CHECKING:
-    from anemoi.training.data.datamodule import AnemoiDatasetsDataModule
+    from anemoi.training.data.multidomain_datamodule import AnemoiMultiDomainDataModule
     from pytorch_lightning.loggers.logger import Logger
     from omegaconf import DictConfig
     import pytorch_lightning as pl
 
 from anemoi.training.diagnostics.profilers import BenchmarkProfiler
 from anemoi.training.diagnostics.profilers import ProfilerProgressBar
-from anemoi.training.train.train import AnemoiTrainer
-from anemoi.training.train.multidomain_profiler import AnemoiMultiDomainProfiler
+from anemoi.training.train.train import AnemoiMultiDomainTrainer
 
 LOGGER = logging.getLogger(__name__)
 console = Console(record=True, width=200)
 
 
-class AnemoiProfiler(AnemoiTrainer):
+class AnemoiMultiDomainProfiler(AnemoiMultiDomainTrainer):
     """Profiling for Anemoi."""
 
     def __init__(self, config: DictConfig) -> None:
@@ -303,10 +302,14 @@ class AnemoiProfiler(AnemoiTrainer):
         return callbacks
 
     @cached_property
-    def datamodule(self) -> AnemoiDatasetsDataModule:
+    def datamodule(self) -> AnemoiMultiDomainDataModule:
         datamodule = super().datamodule
         # to generate a model summary with shapes we need a sample input array
+        # AND for multidomain we need a sample graph (which is provided by the datamodule)
         batch = next(iter(datamodule.train_dataloader()))
+        batch, graph_label = batch
+        print("graph_label", graph_label)
+        print("batch", batch.shape)
         self.example_input_array = batch[
             :,
             0 : self.config.training.multistep_input,
@@ -355,7 +358,6 @@ class AnemoiProfiler(AnemoiTrainer):
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(config: DictConfig) -> None:
-    # AnemoiProfiler(config).profile()
     AnemoiMultiDomainProfiler(config).profile()
 
 

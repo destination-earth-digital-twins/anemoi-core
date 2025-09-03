@@ -15,6 +15,6 @@ system:
 model_summary:
   enabled: True
 snapshot:
-  enabled: True
+  enabled: False
   steps: 4 # wait warmup steps and then do steps
   warmup: 0

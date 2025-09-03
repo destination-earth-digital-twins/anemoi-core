@@ -1,0 +1,175 @@
+defaults:
+  - data: zarr
+  - dataloader: multi_domain
+  - diagnostics: evaluation
+  - hardware: slurm
+  - graph: multi_domain_stretch
+  - model: dynamic_graphtransformer
+  - training: default
+  - _self_
+
+### This file is for local experimentation.
+## When you commit your changes, assign the new features and keywords
+## to the correct defaults.
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+
+  normalizer:
+    max: 
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+
+graph:
+  overwrite: False
+  nodes:
+    hidden:
+      node_builder:
+        _target_: anemoi.graphs.nodes.StretchedTriNodes
+        lam_resolution: 10
+        global_resolution: 7
+        reference_node_name: ${graph.data}
+        mask_attr_name: cutout
+        margin_radius_km: 11
+  # graph already built separate graph build
+  # for SG and global is not yet implemented
+  # has to be defined prior.
+
+diagnostics:
+  log:
+    mlflow:
+      enabled: True
+      offline: True
+      authentication: True
+      experiment_name: multi-domain-experiments
+      project_name: Anemoi
+      log_model: False
+      tracking_uri: https://mlflow.ecmwf.int
+      run_name: md-stage-d-ara-long-high-lr #md-cloudy-skies
+    wandb:
+      enabled: False
+  print_memory_summary: True
+  show_entire_globe: False
+
+hardware:
+  files:
+    graph: ARA
+    warm_start: anemoi-by_time-epoch_007-step_015000.ckpt
+    #"/pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt"
+  paths:
+    graph: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/output/graphs/
+    output: /pfs/lustrep4/scratch/project_465000527/buurmans/DE_330_WP14/Anemoi/multi-domain-training/output/european_model/ #/pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+
+model:
+  num_channels: 1024
+  processor:
+    num_layers: 16
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+
+training:
+  #mapping_weights: 
+  #  layer_norm_attention_src: layer_norm1
+  #  layer_norm_attention_dest: layer_norm2
+  #  layer_norm_attention: layer_norm1
+  #  layer_norm_mlp: layer_norm2
+  # choose normal anemoi runtime or multi-domain
+  runtime:
+    # alternatives: AnemoiTrainer | AnemoiMultiDomainTrainer
+    # _target_: anemoi.training.train.train.AnemoiTrainer
+    _target_: anemoi.training.train.train.AnemoiMultiDomainTrainer
+  run_id: null
+  # run_id: c7667d89407e44f99b6daa2fc828a8df #41663230a8a14384a27ab8fde3c4cede #checkpoint/3fb85b72ba9647d5ae4fe86ce1b5a885
+  # fork_run_id: 204ea61f38a24a80b908d35e2acc597a
+  fork_run_id: 0faec6037e3641ac906066e6bb7d5083
+  transfer_learning: True
+  load_weights_only: True
+  max_steps: 10000
+
+  node_loss_weights:
+    ARA:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      node_attribute: area_weight
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+  lr:
+    rate: 4e-05  # local_lr
+    iterations: ${training.max_steps}  # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
+    min: 3e-7  # Not scaled by #GPU
+    warmup_t: 1000
+
+  validation_metrics:
+    - _target_: anemoi.training.losses.mse.WeightedMSELoss
+      scalars: []
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "ARA"
+      ignore_nans: True
+
+dataloader:
+  num_workers:
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+  batch_size: # sharding does not support batch_size > 1
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+  limit_batches:
+    training: null
+    validation: null
+
+  training_periods:
+    ARA:
+      start: 2012-01-01
+      end: 2020-09-30
+  validation_periods:
+    ARA:
+      start: 2020-10-01
+      end: 2021-09-30
+  regional_datasets:
+    ARA:
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ARA/aut-rd-an-oper-0001-ara-2p5km-20120101_20210930-6h-v10.zarr
+
+  datasets:
+    cutout:
+      - dataset: null  # Fixed `null` value
+      - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+    adjust: ["all"]
+    drop: ["sdor","slor", "tcw", "u_600", "v_600","z_600","t_600","q_600", "w_600"]
+    statistics: ${hardware.paths.data}/aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr

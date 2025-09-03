@@ -132,13 +132,14 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     def ds_valid(self) -> NativeGridDataset:
         r = self.rollout
         r = max(r, self.config.dataloader.validation_rollout)
-
-        if not self.config.dataloader.training.end < self.config.dataloader.validation.start:
-            LOGGER.warning(
-                "Training end date %s is not before validation start date %s.",
-                self.config.dataloader.training.end,
-                self.config.dataloader.validation.start,
-            )
+        print("training end date", self.config.dataloader.training.end)
+        print("validation start date", self.config.dataloader.validation.start)
+        # if not self.config.dataloader.training.end < self.config.dataloader.validation.start:
+        #     LOGGER.warning(
+        #         "Training end date %s is not before validation start date %s.",
+        #         self.config.dataloader.training.end,
+        #         self.config.dataloader.validation.start,
+        #     )
         return self._get_dataset(
             open_dataset(self.config.dataloader.validation),
             shuffle=False,

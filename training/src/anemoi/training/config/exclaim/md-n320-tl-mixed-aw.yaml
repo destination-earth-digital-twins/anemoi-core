@@ -1,0 +1,234 @@
+defaults:
+  - data: zarr
+  - dataloader: multi_domain
+  - diagnostics: evaluation
+  - hardware: slurm
+  - graph: multi_domain_stretch
+  - model: dynamic_graphtransformer
+  - training: default
+  - _self_
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+### This file is for local experimentation.
+## When you commit your changes, assign the new features and keywords
+## to the correct defaults.
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+
+  normalizer:
+    max: 
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+
+graph:
+  overwrite: False
+  clobber: False
+  # graph already built separate graph build
+  # for SG and global is not yet implemented
+  # has to be defined prior.
+
+diagnostics:
+  log:
+    mlflow:
+      enabled: True
+      offline: True
+      authentication: True
+      experiment_name: metno #multi-domain-experiments
+      project_name: Anemoi
+      log_model: False
+      tracking_uri: https://mlflow.ecmwf.int
+      run_name: md-stage-c-mixed-aw #md-aa-uwc-meps-aa-1 #md-low-msg-pass-n320-meps #md-cloudy-skies
+    wandb:
+      enabled: False
+  print_memory_summary: True
+  show_entire_globe: False
+
+hardware:
+  files:
+    warm_start: null #"/pfs/lustrep4/scratch/project_465000527/anemoi/experiments/n320_arome_meps_pretrain/anemoi-by_epoch-epoch_038-step_019503.ckpt"
+  paths:
+    graph: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/cloudy-skies-exp/md-graphs/
+    output: /pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/cloudy-skies-exp/output/fc6h/c1024b16/ #/pfs/lustrep4/scratch/project_465000527/salihiar/multi-domain-setup/
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+
+model:
+  num_channels: 1024
+  processor:
+    num_layers: 16
+
+training:
+  # choose normal anemoi runtime or multi-domain
+  runtime:
+    # alternatives: AnemoiTrainer | AnemoiMultiDomainTrainer
+    _target_: anemoi.training.train.train.AnemoiMultiDomainTrainer
+
+  run_id: null #7c36fc25a5be431c8db60a634333b7df
+  fork_run_id: 6d12f96dc6644eb588287d9439f0f6a3 #c7667d89407e44f99b6daa2fc828a8df
+  transfer_learning: True
+  load_weights_only: True
+  max_steps: 10000 #150000
+
+  node_loss_weights:
+    MEPS:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      node_attribute: area_weight
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+    ARA:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      node_attribute: area_weight
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.10
+    AA:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      node_attribute: area_weight
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.23
+    UWC:
+      _target_: anemoi.training.losses.nodeweights.ReweightedGraphNodeAttribute
+      target_nodes: ${graph.data}
+      node_attribute: area_weight
+      scaled_attribute: cutout
+      weight_frac_of_total: 0.10
+
+  lr:
+    rate: 6e-6 #5e-6  # local_lr
+    iterations: ${training.max_steps}  # NOTE: When max_epochs < max_steps, scheduler will run for max_steps
+    min: 3e-7  # Not scaled by #GPU
+    warmup_t: 1000 #1500
+
+  validation_metrics:
+    - _target_: anemoi.training.losses.mse.WeightedMSELoss
+      scalars: []
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "MEPS"
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "ARA"
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "AA"
+      ignore_nans: True
+    - _target_: anemoi.training.losses.multidomain_mse.MultiDomainMSELoss
+      loss_name: "UWC"
+      ignore_nans: True
+
+dataloader:
+  num_workers:
+    training: 4
+    validation: 4
+    test: 1
+    predict: 1
+  limit_batches:
+    training: null
+    validation: null
+
+  training_periods:
+    MEPS: # Stretched-grid
+      start: 2020-02-05 #oper-ea-an-2016-2023
+      end: 2022-05-31
+    ARA: # Stretched-grid
+      start: 2012-01-01 #oper-ea-an-2016-2023
+      end: 2018-12-31
+    AA: # Stretched-grid
+      start: 2017-01-01 #oper-ea-an-2016-2023
+      end: 2022-05-31
+    UWC: # Stretched-grid
+      start: null #2020-10-01 06:00:00 #oper-ea-an-2016-2023
+      end: 2022-08-31
+
+
+  validation_periods:
+    MEPS:
+      start: 2022-06-01
+      end: 2023-05-31
+    ARA:
+      start: 2019-01-01
+      end: 2019-12-31
+    AA:
+      start: 2022-06-01
+      end: 2023-05-31
+    UWC:
+      start: 2022-09-01
+      end: 2023-09-30
+
+
+  # global_datasets:
+  #   concat:
+  #   - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+  #     drop: ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr
+  #     drop: ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+  #   adjust: ["start", "end"]
+  #   reorder: sort
+
+  regional_datasets:
+    MEPS: 
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2023-6h-v7.zarr
+      area: [74.1309, -13.15014, 51.1192, 49.4183] # should correspond to trim_edge: 50
+    ARA: 
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ARA/aut-rd-an-oper-0001-ara-2p5km-20120101_20200930-6h-v10.zarr
+      area: [49.88125, 9.53, 45.50875, 17.16]
+    AA:
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/AROME-ARCTIC/arome_arctic-2_5km-2017-2024.zarr
+      area: [86.4757, 3.6912e-05, 63.6814, 359.9999] # should correspond to trim_edge: 50
+    UWC:
+      dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/UWC_WEST/uwcwest-rr-an-oper-0001-mars-2p0km-2020-2023-6h-v2-knmi.zarr
+      area: [56.0020, 0.0000, 49.0000, 11.2810]
+
+  datasets:
+    cutout:
+      - dataset: null
+        area: null 
+      - concat:
+          - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+            start: 1979-01-01
+            end: 2018-12-31
+            drop: ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+          - dataset: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr
+            start: 2019-01-01
+            end: 2023-12-31
+            drop: ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+              #drop: ["sdor","slor","cp", "tcw", "u_50", "u_250", "u_600", "v_50","v_250", "v_600","z_50","z_250","z_600","t_50","t_250","t_600", "q_50", "q_250","q_600", "w_50", "w_250", "w_600"]
+        reorder: sort
+    adjust: ["all"]
+
+  

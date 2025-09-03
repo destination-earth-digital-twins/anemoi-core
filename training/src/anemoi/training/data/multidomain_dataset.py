@@ -314,6 +314,7 @@ class NativeMultiGridDataset(IterableDataset):
 
         for num, batch in enumerate(shuffled_chunk_indices):
             dataset_label = sample_dataset[num]
+            # print("dataset label", dataset_label)
             for batch_idx in range(self.effective_bs):
                 if isinstance(batch, np.ndarray):
                     i = batch[batch_idx]
@@ -322,6 +323,7 @@ class NativeMultiGridDataset(IterableDataset):
                 start = i - (self.multi_step - 1) * self.timeincrement
                 end = i + (self.rollout + 1) * self.timeincrement
                 grid_shard_indices = self.grid_indices[dataset_label].get_shard_indices(self.reader_group_rank)
+                # print("grid_shard_indices", grid_shard_indices)
                 if isinstance(grid_shard_indices, slice):
                     # Load only shards into CPU memory
                     # print("start", self.label, start, end, self.timeincrement, self.data[dataset_label].shape)
@@ -330,6 +332,7 @@ class NativeMultiGridDataset(IterableDataset):
                     # Load full grid in CPU memory, select grid_shard after
                     # Note that anemoi-datasets currently doesn't support slicing + indexing
                     # in the same operation.
+                    # print("grid_shard_indices", len(self.grid_shard_indices))
                     x = self.data[dataset_label][start : end : self.timeincrement, :, :, :]
                     x = x[..., grid_shard_indices]  # select the grid shard
                 x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
