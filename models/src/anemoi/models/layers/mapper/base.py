@@ -31,7 +31,7 @@ class BaseMapper(nn.Module, ABC):
         in_channels_dst: int = 0,
         hidden_dim: int = 128,
         out_channels_dst: Optional[int] = None,
-        cpu_offload: bool = False,
+        cpu_offload: bool = True,
         activation: str = "SiLU",
         **kwargs,
     ) -> None:
@@ -44,16 +44,22 @@ class BaseMapper(nn.Module, ABC):
         self.out_channels_dst = out_channels_dst
         self.activation = activation
 
-        self.proc = NotImplemented
+        self.proc = [] #NotImplemented
 
-        self.offload_layers(cpu_offload)
+        #self.offload_layers(cpu_offload)
 
     def offload_layers(self, cpu_offload):
-        if cpu_offload:
-            self.proc = nn.ModuleList([offload_wrapper(x) for x in self.proc])
+        if cpu_offload and isinstance(self.proc, nn.Module):
+            print("Offloading layers to CPU")
+            self.proc = offload_wrapper(self.proc) #nn.ModuleList([offload_wrapper(x) for x in self.proc])
 
     def pre_process(
-        self, x, shard_shapes, model_comm_group=None
+        self, 
+        x, 
+        shard_shapes,  
+        x_src_is_sharded=False,
+        x_dst_is_sharded=False,
+        model_comm_group=None,
     ) -> tuple[Tensor, Tensor, tuple[int], tuple[int]]:
         """Pre-processing for the Mappers.
 
@@ -65,6 +71,10 @@ class BaseMapper(nn.Module, ABC):
             Data containing source and destination nodes and edges.
         shard_shapes : Tuple[Tuple[int], Tuple[int]]
             Shapes of the sharded source and destination nodes.
+        x_src_is_sharded : bool
+            Whether the source nodes are sharded.
+        x_dst_is_sharded : bool
+            Whether the destination nodes are sharded.
         model_comm_group : ProcessGroup
             Groups which GPUs work together on one model instance
 
@@ -77,7 +87,13 @@ class BaseMapper(nn.Module, ABC):
         x_src, x_dst = x
         return x_src, x_dst, shapes_src, shapes_dst
 
-    def post_process(self, x_dst, shapes_dst, model_comm_group=None):
+    def post_process(
+        self, 
+        x_dst, 
+        shapes_dst, 
+        model_comm_group=None, 
+        keep_x_dst_sharded=False
+        ) -> Tensor:
         """Post-processing for the mapper."""
         return x_dst
 
@@ -85,26 +101,45 @@ class BaseMapper(nn.Module, ABC):
 class BackwardMapperPostProcessMixin:
     """Post-processing for Backward Mapper from hidden -> data."""
 
-    def post_process(self, x_dst, shapes_dst, model_comm_group=None):
+    def post_process(
+        self, 
+        x_dst, 
+        shapes_dst, 
+        model_comm_group=None, 
+        keep_x_dst_sharded=False
+        ) -> Tensor:
         x_dst = self.node_data_extractor(x_dst)
-        x_dst = gather_tensor(
-            x_dst,
-            0,
-            change_channels_in_shape(shapes_dst, self.out_channels_dst),
-            model_comm_group,
-        )
+        # if x_dst is sharded, we dont need to to gather
+        if not keep_x_dst_sharded:
+            x_dst = gather_tensor(
+                x_dst,
+                0,
+                change_channels_in_shape(shapes_dst, self.out_channels_dst),
+                model_comm_group,
+            )
+        #print("done post processing")
         return x_dst
 
 
 class ForwardMapperPreProcessMixin:
     """Pre-processing for Forward Mapper from data -> hidden."""
 
-    def pre_process(self, x, shard_shapes, model_comm_group=None):
+    def pre_process(self, x, shard_shapes, model_comm_group=None, x_src_is_sharded=False, x_dst_is_sharded=False) -> tuple[Tensor, Tensor, tuple[int], tuple[int]]:
         x_src, x_dst, shapes_src, shapes_dst = super().pre_process(
             x, shard_shapes, model_comm_group
         )
-        x_src = shard_tensor(x_src, 0, shapes_src, model_comm_group)
-        x_dst = shard_tensor(x_dst, 0, shapes_dst, model_comm_group)
+
+        if not x_src_is_sharded:
+            x_src = shard_tensor(
+                x_src, 0, shapes_src, model_comm_group
+            )
+        if not x_dst_is_sharded:
+            x_dst = shard_tensor(
+                x_dst, 0, shapes_dst, model_comm_group
+            )
+
+        #x_src = shard_tensor(x_src, 0, shapes_src, model_comm_group)
+        #x_dst = shard_tensor(x_dst, 0, shapes_dst, model_comm_group)
         x_src = self.emb_nodes_src(x_src)
         x_dst = self.emb_nodes_dst(x_dst)
         shapes_src = change_channels_in_shape(shapes_src, self.hidden_dim)
