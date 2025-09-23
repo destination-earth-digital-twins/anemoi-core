@@ -23,6 +23,7 @@ from torch_geometric.data import HeteroData
 from anemoi.models.distributed.shapes import get_shape_shards
 from anemoi.models.layers.graph import NamedNodesAttributes
 from anemoi.models.layers.utils import load_layer_kernels
+from anemoi.models.layers.mapper.dynamic import DynamicGraphTransformerBaseMapper
 from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
@@ -137,6 +138,9 @@ class AnemoiMultiDomain(nn.Module):
         batch_size: int,
         shard_shapes: tuple[tuple[int, int], tuple[int, int]],
         model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+        keep_x_dst_sharded: bool = False,
         use_reentrant: bool = False,
     ) -> Tensor:
         """Run mapper with activation checkpoint.
@@ -156,23 +160,45 @@ class AnemoiMultiDomain(nn.Module):
             in one model instance
         use_reentrant : bool, optional
             Use reentrant, by default False
+        x_src_is_sharded : bool, optional
+            Source data is sharded, by default False
+        x_dst_is_sharded : bool, optional
+            Destination data is sharded, by default False
+        keep_x_dst_sharded : bool, optional
+            Keep destination data sharded, by default False
+        
 
         Returns
         -------
         Tensor
             Mapped data
         """
+        kwargs = {
+            "sub_graph": sub_graph,
+            "batch_size": batch_size,
+            "shard_shapes": shard_shapes,
+            "model_comm_group": model_comm_group,
+            "x_src_is_sharded": x_src_is_sharded,
+            "x_dst_is_sharded": x_dst_is_sharded,
+            "keep_x_dst_sharded": keep_x_dst_sharded,
+        }
+        if isinstance(mapper, DynamicGraphTransformerBaseMapper) and mapper.shard_strategy == "edges":
+            return mapper(
+                data,
+                **kwargs,
+            )
         return checkpoint(
             mapper,
             data,
-            sub_graph=sub_graph,
-            batch_size=batch_size,
-            shard_shapes=shard_shapes,
-            model_comm_group=model_comm_group,
+            **kwargs,
             use_reentrant=use_reentrant,
         )
 
-    def forward(self, x: Tensor, graph_label: str, model_comm_group: Optional[ProcessGroup] = None) -> Tensor:
+    def forward(
+        self, x: Tensor, 
+        graph_label: str, 
+        model_comm_group: Optional[ProcessGroup] = None,
+        ) -> Tensor:
         batch_size = x.shape[0]
         ensemble_size = x.shape[2]
         graph = self._graph_data[graph_label]
@@ -200,6 +226,9 @@ class AnemoiMultiDomain(nn.Module):
             batch_size=batch_size,
             shard_shapes=(shard_shapes_data, shard_shapes_hidden),
             model_comm_group=model_comm_group,
+            x_src_is_sharded=False,
+            x_dst_is_sharded=False,
+            keep_x_dst_sharded=True,  # keep x_latent sharded
         )
 
         x_latent_proc = self.processor(
@@ -221,6 +250,9 @@ class AnemoiMultiDomain(nn.Module):
             batch_size=batch_size,
             shard_shapes=(shard_shapes_hidden, shard_shapes_data),
             model_comm_group=model_comm_group,
+            x_src_is_sharded=True,
+            x_dst_is_sharded=False,
+            keep_x_dst_sharded=False,  
         )
 
         x_out = (
