@@ -82,7 +82,7 @@ class GraphConv(MessagePassing):
 
         return out, edges_new
 
-#@torch_compile()
+@torch_compile()
 class GraphTransformerConv(MessagePassing):
     """Message passing part of graph transformer operator.
 
