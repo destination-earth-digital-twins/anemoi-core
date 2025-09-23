@@ -183,13 +183,122 @@ def save_inference_checkpoint(model: torch.nn.Module, metadata: dict, save_path:
 #     model.load_state_dict(state_dict, strict=False)
 #     return model
 
+# def RechunkProcessor(ckpt_path: str, model: torch.nn, config: DictConfig) -> None:
+#     """
+#     Patch the processor chunking configuration to ensure it is set to True.
+
+#     Args:
+#         config (DictConfig): The configuration dictionary to be patched.
+#     """
+#     if "processor" in config.model and "num_chunks" in config.model.processor:
+#         new_num_chunks = config.model.processor.new_num_chunks
+#     else:
+#         raise KeyError("The configuration does not contain 'processor.chunking'.")
+
+#     original_num_chunks = config.model.processor.num_chunks
+#     num_layers = config.model.processor.num_layers
+
+#     assert (
+#         original_num_chunks != new_num_chunks
+#     ), f"num_chunks is already set to {original_num_chunks}, expected {new_num_chunks}."
+
+#     def remapped_proccesor_chunk_and_index(key: str) -> str:
+#         # Match blocks in processor, e.g. proc.0.blocks.9.lin_edge.bias
+#         m = re.match(r"(.*processor\.proc\.(\d+)\.blocks\.(\d+)\.)(.*)", key)
+#         if m:
+#             prefix, old_proc_idx, old_block_idx, suffix = m.groups()
+#             old_proc_idx = int(old_proc_idx)
+#             old_block_idx = int(old_block_idx)
+
+#             # Flatten across old processors
+#             abs_layer_idx = old_proc_idx * old_chunk_size + old_block_idx
+
+#             # Map to new processor + block
+#             new_proc_idx = abs_layer_idx // new_chunk_size
+#             new_block_idx = abs_layer_idx % new_chunk_size
+
+#             # Rebuild key
+#             new_key = f"{prefix}".replace(
+#                 f"proc.{old_proc_idx}.blocks.{old_block_idx}.",
+#                 f"proc.{new_proc_idx}.blocks.{new_block_idx}."
+#             ) + suffix
+#             return new_key
+#         else:
+#             return key  # leave encoder or other proc.* keys unchanged
+
+    
+#     checkpoint = torch.load(ckpt_path, map_location=model.device, weights_only=False)
+#     state_dict = checkpoint.get("state_dict", checkpoint)
+
+#     for layername, weight in state_dict.items():
+#         state_dict[remapped_proccesor_chunk_and_index[layername]] = weight
+#         del state_dict[layername]
+    
+#     return model.load_state_dict(state_dict, strict=False)
+
+def RechunkProcessor(ckpt_path: str, model: torch.nn.Module, config: DictConfig):
+    """
+    Patch the processor chunking configuration to rechunk layers.
+
+    Args:
+        ckpt_path (str): Path to the checkpoint.
+        model (torch.nn.Module): The model to load the patched state_dict into.
+        config (DictConfig): The configuration containing processor info.
+    """
+    # Extract parameters
+    try:
+        num_layers = config.model.processor.num_layers
+        original_num_chunks = config.model.processor.original_num_chunks
+        new_num_chunks = config.model.processor.new_num_chunks
+    except AttributeError:
+        raise KeyError("Expected `processor.num_layers`, `original_num_chunks`, and `new_num_chunks` in config.")
+
+    old_chunk_size = num_layers // original_num_chunks
+    new_chunk_size = num_layers // new_num_chunks
+
+    # Load checkpoint
+    checkpoint = torch.load(ckpt_path, map_location=model.device, weights_only=False)
+    state_dict = checkpoint.get("state_dict", checkpoint).copy()
+
+    # Function to remap processor keys
+    def remap_processor_key(key: str) -> str:
+        """
+        Remap keys like processor.proc.X.blocks.Y.* to new chunking.
+        Leaves other keys (encoder/decoder) unchanged.
+        """
+        m = re.search(r"processor\.proc\.(\d+)\.blocks\.(\d+)\.", key)
+        if not m:
+            return key  # leave other keys untouched
+
+        old_proc_idx, old_block_idx = map(int, m.groups())
+        abs_layer_idx = old_proc_idx * old_chunk_size + old_block_idx
+        new_proc_idx = abs_layer_idx // new_chunk_size
+        new_block_idx = abs_layer_idx % new_chunk_size
+
+        return re.sub(
+            r"processor\.proc\.\d+\.blocks\.\d+\.",
+            f"processor.proc.{new_proc_idx}.blocks.{new_block_idx}.",
+            key,
+        )
+
+    # Build new state dict
+    #new_state_dict = {remap_processor_key(k): v for k, v in state_dict.items()}
+    for k in list(state_dict.keys()):
+        new_key = remap_processor_key(k)
+        if new_key != k:
+            state_dict[new_key] = state_dict.pop(k)
+
+    # Load into model
+    model.load_state_dict(state_dict, strict=False)
+    return model
+
 def transfer_learning_loading(
         config: DictConfig,
         model: torch.nn.Module, 
         ckpt_path: Path | str
         ) -> nn.Module:
     # Load the checkpoint
-    checkpoint = torch.load(ckpt_path, map_location=model.device)
+    checkpoint = torch.load(ckpt_path, map_location=model.device, weights_only=False)
     # Filter out layers with size mismatch
     state_dict = checkpoint["state_dict"].copy()
     model_state_dict = model.state_dict()
