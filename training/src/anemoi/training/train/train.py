@@ -164,14 +164,23 @@ class AnemoiTrainer:
 
         if self.load_weights_only:
             # Sanify the checkpoint for transfer learning
-            if self.config.training.transfer_learning:
+            rechunk_processor = self.config.training.get("rechunk_precessor", None)
+            if rechunk_proccesor and self.config.training.transfer_learning:
+                from anemoi.training.utils.checkpoint import RechunkProcessor
+
+                LOGGER.info("Rechunking processor: %s", rechunk_processor)
+                model = RechunkProcessor(self.last_checkpoint, model, self.config)
+            
+            elif self.config.training.transfer_learning:
                 LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
                 return transfer_learning_loading(model, self.last_checkpoint)
-
+            else:
+                pass
             LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
 
             return GraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
-
+        
+            
         LOGGER.info("Model initialised from scratch.")
         return model
 
@@ -414,12 +423,16 @@ class AnemoiTrainer:
         )
 
         LOGGER.debug("Starting training..")
-
-        trainer.fit(
-            self.model,
-            datamodule=self.datamodule,
-            ckpt_path=None if self.load_weights_only else self.last_checkpoint,
-        )
+        torch.cuda.memory._record_memory_history()
+        try:
+            trainer.fit(
+                self.model,
+                datamodule=self.datamodule,
+                ckpt_path=None if self.load_weights_only else self.last_checkpoint,
+            )
+        except Exception as e:
+            torch.cuda.memory._dump_snapshot("my_snapshot.pickle")
+            raise e
 
         if self.config.diagnostics.print_memory_summary:
             LOGGER.debug("memory summary: %s", torch.cuda.memory_summary())
@@ -538,14 +551,22 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
         model = MultiDomainGraphForecaster(**kwargs)
         if self.load_weights_only:
+            rechunk_processor = self.config.training.get("rechunk_proccesor", None)
+            print(rechunk_processor)
+            if rechunk_processor:
+                from anemoi.training.utils.checkpoint import RechunkProcessor
+                LOGGER.info("Rechunking processor: %s", rechunk_processor)
+                return RechunkProcessor(self.last_checkpoint, model, self.config)
             # Sanify the checkpoint for transfer learning
-            if self.config.training.transfer_learning:
+            elif self.config.training.transfer_learning:
                 LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
                 return transfer_learning_loading(self.config, model, self.last_checkpoint)
-
+            else:
+                pass 
             LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
 
             return MultiDomainGraphForecaster.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
+
 
         LOGGER.info("Model initialised from scratch.")
         return model
@@ -553,19 +574,23 @@ class AnemoiMultiDomainTrainer(AnemoiTrainer):
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(anemoi_config: DictConfig) -> None:
+    #print(anemoi_config)
+    from anemoi.models.layers.mapper.dynamic import DynamicGraphTransformerForwardMapper
+    print(dir(DynamicGraphTransformerForwardMapper))
+    AnemoiMultiDomainTrainer(anemoi_config).train()
 
-    try:
-        anemoi_trainer = hydra.utils.instantiate(
-            anemoi_config.training.runtime,
-            anemoi_config=anemoi_config,
-            _recursive_=False
-            )
-        anemoi_trainer.train()
-    except Exception as e:
-        LOGGER.error(
-            "Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer",
-            anemoi_config.training.runtime
-        )
+    #try:
+    #    anemoi_trainer = hydra.utils.instantiate(
+    #        anemoi_config.training.runtime,
+    #        anemoi_config=anemoi_config,
+    #        _recursive_=False
+    #        )
+    #    anemoi_trainer.train()
+    #except Exception as e:
+    #    LOGGER.error(
+    #        f"Failed to instantiate runtime: %s. Supported runtimes: AnemoiTrainer, AnemoiMultiDomainTrainer. {e}",
+    #        anemoi_config.training.runtime
+    #    )
 
 
 
