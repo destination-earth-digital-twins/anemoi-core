@@ -16,9 +16,10 @@ from torch import nn
 from anemoi.models.layers.utils import CheckpointWrapper
 from anemoi.utils.config import DotDict
 
+from anemoi.models.compile.decorators import torch_compile
 LOGGER = logging.getLogger(__name__)
 
-
+#@torch_compile()
 class MLP(nn.Module):
     """Multi-layer perceptron with optional checkpoint."""
 
