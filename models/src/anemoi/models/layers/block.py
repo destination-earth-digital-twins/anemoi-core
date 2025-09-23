@@ -359,12 +359,11 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         self.lin_query = linear(in_channels, num_heads * self.out_channels_conv)
         self.lin_value = linear(in_channels, num_heads * self.out_channels_conv)
         self.lin_self = linear(in_channels, num_heads * self.out_channels_conv, bias=bias)
-        self.lin_edge = linear(edge_dim, num_heads * self.out_channels_conv)  # , bias=False)
+        self.lin_edge = linear(edge_dim, num_heads * self.out_channels_conv)
 
         self.conv = GraphTransformerConv(out_channels=self.out_channels_conv)
 
         self.projection = linear(out_channels, out_channels)
-
         try:
             act_func = getattr(nn, activation)
         except AttributeError as ae:
@@ -380,7 +379,6 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
             act_func(),
             linear(hidden_dim, out_channels),
         )
-
         if self.update_src_nodes:
             self.node_src_mlp = nn.Sequential(
                 self.layer_norm_mlp,
@@ -400,6 +398,10 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         model_comm_group: Optional[ProcessGroup] = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Shards qkv and edges along head dimension."""
+        if model_comm_group is not None:
+            assert (
+                model_comm_group.size() == 1 or batch_size == 1
+            )," Only batch size of 1 is supported when model is sharded across GPU nodes"
         shape_src_nodes, shape_dst_nodes, shape_edges = shapes
 
         query, key, value, edges = (
@@ -467,6 +469,7 @@ class GraphTransformerMapperBlock(GraphTransformerBaseBlock):
         activation: str = "GELU",
         num_chunks: int = 1,
         update_src_nodes: bool = False,
+        shard_strategy: str = "edges",
         **kwargs,
     ) -> None:
         """Initialize GraphTransformerBlock.
@@ -507,7 +510,23 @@ class GraphTransformerMapperBlock(GraphTransformerBaseBlock):
 
         self.layer_norm_attention_src = self.layer_norm_attention
         self.layer_norm_attention_dest = layer_kernels["LayerNorm"](normalized_shape=in_channels)
-
+        self.shard_strategy = shard_strategy
+    def prepare_qkve_edge_sharding(
+        self, 
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        edges: Tensor,
+    )-> tuple[Tensor, Tensor, Tensor, Tensor]:
+        return (
+            einops.rearrange(
+                    t, 
+                    "nodes (heads vars) -> nodes heads vars", 
+                    heads=self.num_heads, 
+                    vars=self.out_channels_conv
+                )
+                for t in (query, key, value, edges)
+            )
     def forward(
         self,
         x: OptPairTensor,
@@ -518,6 +537,7 @@ class GraphTransformerMapperBlock(GraphTransformerBaseBlock):
         model_comm_group: Optional[ProcessGroup] = None,
         size: Optional[Size] = None,
     ):
+        
         x_skip = x
 
         x = (
@@ -531,21 +551,25 @@ class GraphTransformerMapperBlock(GraphTransformerBaseBlock):
         value = self.lin_value(x[0])
         edges = self.lin_edge(edge_attr)
 
-        if model_comm_group is not None:
-            assert (
-                model_comm_group.size() == 1 or batch_size == 1
-            ), "Only batch size of 1 is supported when model is sharded across GPUs"
+        #if model_comm_group is not None:
+        #    assert (
+        #        model_comm_group.size() == 1 or batch_size == 1
+        #    ), "Only batch size of 1 is supported when model is sharded across GPUs"
 
-        query, key, value, edges = self.shard_qkve_heads(query, key, value, edges, shapes, batch_size, model_comm_group)
+        if self.shard_strategy== "heads":
+            query, key, value, edges = self.shard_qkve_heads(query, key, value, edges, shapes, batch_size, model_comm_group)
+        else:
+            query,key, value, edges = self.prepare_qkve_edge_sharding(query,key, value, edges)
 
         num_chunks = self.num_chunks if self.training else NUM_CHUNKS_INFERENCE
-
+        conv_size = (size, size) if isinstance(size, int) else size
         if num_chunks > 1:
             # split 1-hop edges into chunks, compute self.conv chunk-wise and aggregate
             edge_attr_list, edge_index_list = sort_edges_1hop_chunks(
                 num_nodes=size, edge_attr=edges, edge_index=edge_index, num_chunks=num_chunks
             )
-            out = torch.zeros((x[1].shape[0], self.num_heads, self.out_channels_conv), device=x[1].device)
+            #out = torch.zeros((x[1].shape[0], self.num_heads, self.out_channels_conv), device=x[1].device)
+            out = torch.zeros((*query.shape[:-1], self.out_channels_conv), device=query.device)
             for i in range(num_chunks):
                 out += self.conv(
                     query=query,
@@ -553,12 +577,15 @@ class GraphTransformerMapperBlock(GraphTransformerBaseBlock):
                     value=value,
                     edge_attr=edge_attr_list[i],
                     edge_index=edge_index_list[i],
-                    size=size,
+                    size=conv_size,
                 )
         else:
-            out = self.conv(query=query, key=key, value=value, edge_attr=edges, edge_index=edge_index, size=size)
+            out = self.conv(query=query, key=key, value=value, edge_attr=edges, edge_index=edge_index, size=conv_size)
 
-        out = self.shard_output_seq(out, shapes, batch_size, model_comm_group)
+        if self.shard_strategy == "heads":
+            out = self.shard_output_seq(out, shapes, batch_size, model_comm_group)
+        else:
+            out = einops.rearrange(out, "nodes heads vars -> nodes (heads vars)")
 
         # compute out = self.projection(out + x_r) in chunks:
         out = torch.cat([self.projection(chunk) for chunk in torch.tensor_split(out + x_r, num_chunks, dim=0)], dim=0)
