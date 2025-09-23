@@ -12,13 +12,17 @@ from typing import Optional
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 from torch.distributed.distributed_c10d import ProcessGroup
 from torch_geometric.data import HeteroData
+from torch_geometric.typing import Adj
 from torch_geometric.typing import PairTensor
+from torch_geometric.utils import bipartite_subgraph
 
-from anemoi.models.distributed.graph import shard_tensor
-from anemoi.models.distributed.shapes import change_channels_in_shape
-from anemoi.models.distributed.shapes import get_shape_shards
+
+from anemoi.models.distributed.graph import shard_tensor, sync_tensor, gather_tensor
+from anemoi.models.distributed.shapes import change_channels_in_shape, get_shape_shards
+from anemoi.models.distributed.khop_edges import drop_unconnected_src_nodes,sort_edges_1hop_sharding
 from anemoi.models.layers.block import GraphTransformerMapperBlock
 from anemoi.models.layers.mapper.base import BackwardMapperPostProcessMixin
 from anemoi.models.layers.mapper.base import BaseMapper
@@ -47,6 +51,7 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         mlp_hidden_ratio: int = 4,
         edge_dim: int = 0,
         layer_kernels: DotDict = None,
+        shard_strategy: str = "edges"
     ) -> None:
         """Initialize DynamicGraphTransformerBaseMapper.
 
@@ -84,6 +89,9 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
             cpu_offload=cpu_offload,
             activation=activation,
         )
+        #print(num_chunks, "num chunks in dynamic mapper")
+        #print(cpu_offload, "cpu offload in dynamic mapper")
+        self.num_chunks = num_chunks
         self.edge_attribute_names = sub_graph_edge_attributes
         self.edge_index_name = sub_graph_edge_index_name
 
@@ -107,8 +115,263 @@ class DynamicGraphTransformerBaseMapper(BaseMapper):
         )"""
         Linear = layer_kernels["Linear"]
         self.emb_nodes_dst = Linear(self.in_channels_dst, self.hidden_dim)
+        
+        self.shard_strategy = shard_strategy
+        print(self.shard_strategy)
+        assert shard_strategy in ["heads", "edges"], (
+            f"Invalid shard strategy '{shard_strategy}' for {self.__class__.__name__}. "
+            f"Supported strategies are 'heads' and 'edges'."
+        )
 
+    def prepare_edges(
+        self,
+        size: tuple[int, int],
+        batch_size: int,
+        edge_attr: torch.Tensor,
+        edge_index: Adj,
+        #edge_inc: int,
+        model_comm_group: Optional[ProcessGroup] = None,
+    )->tuple[torch.Tensor, Adj]:
+        #edge_attr = self.egde_attr
+        #edge_index = torch.cat(
+        #    [edge_index + i * edge_inc for i in range(batch_size)],
+        #    dim=1,
+        #)
+        #print(edge_attr.shape, "before 1hop")
+        #print(edge_index.shape, "before 1hop")
+        edge_attr, edge_index, shapes_edge_attr, shapes_edge_idx = sort_edges_1hop_sharding(
+            size, edge_attr, edge_index, model_comm_group, relabel_dst_nodes=True
+        )
+        #print(edge_attr.shape, "after 1hop")
+        #print(edge_index.shape, "after 1hop")
+        edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
+        edge_index = shard_tensor(edge_index, 1, shapes_edge_idx, model_comm_group)
+        #print(edge_attr.shape, "after sharding edge_attr")
+        #print(edge_index.shape, "after sharding edge_index")
+        return edge_attr, edge_index
+
+    def pre_process_edge_sharding_wrapper(
+        self,
+        x: PairTensor,
+        edge_attr: torch.Tensor,
+        edge_index: Adj,
+        #edge_inc: int,
+        batch_size: int,
+        shard_shapes: tuple[tuple[int], tuple[int]],
+        model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+    ):
+        x_src, x_dst = x
+        shapes_src, shapes_dst = shard_shapes
+
+        shapes_x_src = change_channels_in_shape(shapes_src, x_src.shape[-1])
+        # gather/scatter if x_src is sharded, always reduce gradients in bwds
+        x_src = sync_tensor(x_src, 0, shapes_x_src, model_comm_group, gather_in_fwd=x_src_is_sharded)
+        
+        # full size of the graph
+        size_full_graph = (sum(shape[0] for shape in shard_shapes[0]), sum(shape[0] for shape in shard_shapes[1]))
+        edge_attr, edge_index = self.prepare_edges(
+            size=size_full_graph, 
+            batch_size=batch_size,
+            edge_attr=edge_attr,
+            edge_index=edge_index,
+            #edge_inc=edge_inc, 
+            model_comm_group=model_comm_group
+        )
+
+         # At this point, x_src is synced i.e. full, x_dst is sharded, edges are sharded (incoming edges to x_dst)
+        size_src_full_dst_shard = (x_src.shape[0], x_dst.shape[0])
+        x_src, edge_index = drop_unconnected_src_nodes(x_src, edge_index, size_src_full_dst_shard)
+
+        if not x_dst_is_sharded:
+            x_dst= shard_tensor(x_dst, 0, shapes_dst, model_comm_group)
+        
+        return x_src, x_dst, edge_attr, edge_index, shapes_src, shapes_dst
+
+    def run_processor_chunk_edge_sharding(
+        self,
+        x: tuple[torch.Tensor,torch.Tensor],
+        dst_chunk: torch.Tensor,
+        edge_attr: torch.Tensor,
+        edge_index: Adj,
+        shapes: tuple[tuple[int], tuple[int]],
+        batch_size: int,
+        size: tuple[int],
+        model_comm_group: Optional[ProcessGroup] = None,
+    ) -> torch.Tensor:
+
+        x_src, x_dst = x
+        # get subgraph of x_dst_chunk and incoming edges, drop unconnected src nodes
+        nodes_src_full = torch.arange(size[0], device=edge_index.device)
+        edge_index, edge_attr = bipartite_subgraph(
+            (nodes_src_full, dst_chunk),
+            edge_index,
+            edge_attr,
+            size=size,
+            relabel_nodes=True,
+        )
+        # drop unconnected src nodes and relabel edges
+        x_src_chunk, edge_index_chunk = drop_unconnected_src_nodes(x_src, edge_index, size)
+        x_dst_chunk = x_dst[dst_chunk]
+        chunk_size = (x_src_chunk.shape[0], x_dst_chunk.shape[0])
+
+        # pre-process chunk, embedding x_src and x_dst if not already done
+        x_src_chunk, x_dst_chunk, _, _ = self.pre_process(
+            (x_src_chunk, x_dst_chunk),shapes, model_comm_group, x_src_is_sharded=True, x_dst_is_sharded=True)
+        
+        
+        (_, x_dst_out), _ = self.proc(
+            x=(x_src_chunk, x_dst_chunk),
+            edge_attr=edge_attr,
+            edge_index=edge_index_chunk,
+            shapes=shapes,
+            batch_size=batch_size,
+            size=chunk_size,
+            model_comm_group=model_comm_group,
+        )
+        return self.post_process(x_dst_out, shapes[1], model_comm_group, keep_x_dst_sharded=True)
+            
+    
+    def edge_sharding(
+        self, 
+        x: PairTensor,
+        edge_attr: torch.Tensor,
+        edge_index: Adj,
+        #edge_inc: int,
+        batch_size: int,
+        shard_shapes: tuple[tuple[int], tuple[int]],
+        model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+        keep_x_dst_sharded: bool = False,
+    )-> PairTensor:
+        x_src, x_dst, edge_attr, edge_index, shapes_src, shapes_dst = checkpoint(
+            self.pre_process_edge_sharding_wrapper,
+            x=x,
+            edge_attr=edge_attr,
+            edge_index=edge_index,
+            #edge_inc=edge_inc,
+            shard_shapes=shard_shapes,
+            batch_size=batch_size,
+            model_comm_group=model_comm_group,
+            x_src_is_sharded=x_src_is_sharded,
+            x_dst_is_sharded=x_dst_is_sharded,
+            use_reentrant=False,
+        )
+
+        size = (x_src.shape[0], x_dst.shape[0]) # Node sizes of local graph sharded
+        #num_chunks = max(self.num_chunks, 1
+        
+        dst_chunks = torch.arange(size[1], device=x_dst.device).tensor_split(self.num_chunks)
+        out_channels = self.out_channels_dst if self.out_channels_dst is not None else self.hidden_dim
+        out_type = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else x_dst.dtype
+        out_dst = torch.empty((*x_dst.shape[:-1], out_channels), dtype=out_type, device=x_dst.device)
+
+        # run processor on each chunk
+        for dst_chunk in dst_chunks:
+            out_dst[dst_chunk] = checkpoint(
+                self.run_processor_chunk_edge_sharding,
+                (x_src, x_dst),
+                dst_chunk,
+                edge_attr,
+                edge_index,
+                (shapes_src, shapes_dst),
+                batch_size,
+                size,
+                model_comm_group,
+                use_reentrant=False,
+            ).to(dtype=out_type)
+        
+        # gather after processing chunks
+        if not keep_x_dst_sharded:
+            out_dst = gather_tensor(
+                out_dst, 0, change_channels_in_shape(shapes_dst, out_channels), model_comm_group,
+            )
+        
+        return out_dst
+
+    def heads_sharding(
+        self,
+        x: PairTensor,
+        edge_attr: torch.Tensor,
+        edge_index: Adj,
+        #edge_inc: int,
+        batch_size: int,
+        shard_shapes: tuple[tuple[int], tuple[int]],
+        model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+        keep_x_dst_sharded: bool = False,
+    ) -> PairTensor:
+        size = (sum(x[0] for x in shard_shapes[0]), sum(x[0] for x in shard_shapes[1]))
+        #edge_index = torch.cat(
+        #    [edge_index + i * edge_inc for i in range(batch_size)],
+        #    dim=1,
+        #)
+        shapes_edge_attr = get_shape_shards(edge_attr, 0, model_comm_group)
+        edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
+
+        x_src, x_dst, shapes_src, shapes_dst = self.pre_process(
+            x, shard_shapes, model_comm_group, x_src_is_sharded, x_dst_is_sharded
+        )
+
+        (x_src, x_dst), edge_attr = self.proc(
+            x=(x_src, x_dst),
+            edge_attr=edge_attr,
+            edge_index=edge_index,
+            shapes=(shapes_src, shapes_dst, shapes_edge_attr),
+            batch_size=batch_size,
+            size=size,
+            model_comm_group=model_comm_group,
+        )
+
+        x_dst = self.post_process(x_dst, shapes_dst, model_comm_group, keep_x_dst_sharded=keep_x_dst_sharded)
+
+        return x_dst
+    
     def forward(
+        self, 
+        x: PairTensor,
+        batch_size: int,
+        sub_graph: HeteroData,
+        shard_shapes: tuple[tuple[int], tuple[int]],
+        model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+        keep_x_dst_sharded: bool = False,
+    ) -> PairTensor:
+
+        edge_index = sub_graph[self.edge_index_name].to(torch.int64)
+        edge_attr = torch.cat(
+            [sub_graph[attr] for attr in self.edge_attribute_names], axis=1
+        )
+
+        if self.shard_strategy == "edges":
+            return self.edge_sharding(
+                x=x, 
+                batch_size=batch_size, 
+                shard_shapes=shard_shapes, 
+                edge_attr=edge_attr,
+                edge_index=edge_index,
+                model_comm_group=model_comm_group,
+                x_src_is_sharded=x_src_is_sharded, 
+                x_dst_is_sharded=x_dst_is_sharded, 
+                keep_x_dst_sharded=keep_x_dst_sharded
+            )
+        else:
+            return self.heads_sharding(
+                x=x, 
+                edge_attr=edge_attr, 
+                edge_index=edge_index, 
+                batch_size=batch_size, 
+                shard_shapes=shard_shapes, 
+                model_comm_group=model_comm_group,
+                x_src_is_shared=x_src_is_sharded, 
+                x_dst_is_sharded=x_dst_is_sharded, 
+                keep_x_dst_sharded=keep_x_dst_sharded
+            )
+    def _forward(
         self,
         x: PairTensor,
         batch_size: int,
@@ -220,10 +483,15 @@ class DynamicGraphTransformerForwardMapper(
         sub_graph: HeteroData,
         shard_shapes: tuple[tuple[int], tuple[int]],
         model_comm_group: Optional[ProcessGroup] = None,
+        x_src_is_sharded: bool = False,
+        x_dst_is_sharded: bool = False,
+        keep_x_dst_sharded: bool = False,
     ) -> PairTensor:
         x_dst = super().forward(
-            x, batch_size, sub_graph, shard_shapes, model_comm_group
+            x, batch_size, sub_graph, shard_shapes, model_comm_group,
+            x_src_is_sharded=x_src_is_sharded,x_dst_is_sharded=x_dst_is_sharded, keep_x_dst_sharded=keep_x_dst_sharded,
         )
+        #print("inside dynamic forward mapper")
         return x[0], x_dst
 
 
@@ -297,12 +565,13 @@ class DynamicGraphTransformerBackwardMapper(
             nn.Linear(self.hidden_dim, self.out_channels_dst),
         )
 
-    def pre_process(self, x, shard_shapes, model_comm_group=None):
+    def pre_process(self, x, shard_shapes, model_comm_group=None, x_src_is_sharded: bool = False, x_dst_is_sharded: bool = False):
         x_src, x_dst, shapes_src, shapes_dst = super().pre_process(
             x, shard_shapes, model_comm_group
         )
         shapes_src = change_channels_in_shape(shapes_src, self.hidden_dim)
-        x_dst = shard_tensor(x_dst, 0, shapes_dst, model_comm_group)
+        if not x_dst_is_sharded:
+            x_dst = shard_tensor(x_dst, 0, shapes_dst, model_comm_group)
         x_dst = self.emb_nodes_dst(x_dst)
         shapes_dst = change_channels_in_shape(shapes_dst, self.hidden_dim)
         return x_src, x_dst, shapes_src, shapes_dst
