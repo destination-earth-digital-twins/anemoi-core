@@ -277,17 +277,19 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         )
 
         self.num_chunks = num_chunks
-
+        self.dynamic_mode = dynamic_mode
         Linear = self.layer_factory.Linear
-        if dynamic_mode:
+
+        if self.dynamic_mode:
             assert edge_dim != 0, f"Expecting non zero value for edge_dim, got: {edge_dim}"
             assert sub_graph_edge_index_name is not None, f"Expecting a value to be set, got None"
             
             self.edge_dim = edge_dim
             self.sub_graph_edge_index_name = sub_graph_edge_index_name
             self.sub_graph_edge_attributes = sub_graph_edge_attributes
-            # Notice TrainableTensor is by default removed, we dont want to tie the model to the grid
-        
+            # Notice TrainableTensor is by default 0, we dont want to tie the model to the grid
+            trainable_size = 0
+
         else:
             assert sub_graph is not None, , f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
             assert sub_graph_edge_attributes is not None, , f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
@@ -295,7 +297,8 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             assert dst_grid_size is not None, f"dynamic_mode set to f{dynamic_mode}, expect dst_grid_size type: int"
 
             self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
-            self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
+        
+        self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
 
         self.proc = GraphTransformerMapperBlock(
             in_channels=hidden_dim,
@@ -574,9 +577,9 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             # multi-domain mode is activated
 
             # generating edge_indexes and edge_attr
-            kwargs_forward["edge_index"] = sub_graph[self.edge_index_name].to(torch.int64)
+            kwargs_forward["edge_index"] = sub_graph[self.sub_graph_edge_index_name].to(torch.int64)
             kwargs_forward["edge_attr"] = torch.cat(
-                [sub_graph[attr] for attr in self.edge_attribute_names], axis=1
+                [sub_graph[attr] for attr in self.sub_graph_edge_attributes], axis=1
             )
         if self.shard_strategy == "edges":
             return self.mapper_forward_with_edge_sharding(**kwargs_forward)
