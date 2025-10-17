@@ -187,6 +187,7 @@ class GraphEdgeMixin:
         Tensor
             Edge Index
         """
+        # TODO: Check!!! Do we need this for MD??? default MD does not use this, but could this be useful?
         edge_index = torch.cat(
             [edge_index + i * edge_inc for i in range(batch_size)],
             dim=1,
@@ -208,14 +209,17 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         num_chunks: int,
         num_heads: int,
         mlp_hidden_ratio: int,
-        sub_graph: HeteroData,
         sub_graph_edge_attributes: list[str],
-        src_grid_size: int,
-        dst_grid_size: int,
+        sub_graph: Optional[HeteroData] = None,,
+        sub_graph_edge_index_name: str = None,
+        edge_dim: Optional[int] = None,
+        src_grid_size: Optional[int] = None,
+        dst_grid_size: Optional[int] = None,
         qk_norm: bool = False,
         cpu_offload: bool = False,
         layer_kernels: DotDict = None,
         shard_strategy: str = "edges",
+        dynamic_mode: bool = False, 
     ) -> None:
         """Initialize GraphTransformerBaseMapper.
 
@@ -237,10 +241,14 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             Number of heads in transformer
         mlp_hidden_ratio: int
             ratio of mlp hidden dimension to embedding dimension
-        sub_graph : HeteroData
+        sub_graph : HeteroData, Optional
             Sub graph of the full structure
-        sub_graph_edge_attributes : list[str]
+        sub_graph_edge_attributes : list[str], Optional
             Edge attributes to use
+        sub_graph_edge_index_name: str, Optional
+            Needed for multi-domain. Name of the graph index, default None. 
+        edge_dim: int, Optional
+            WRITE THIS
         src_grid_size : int
             Source grid size
         dst_grid_size : int
@@ -254,6 +262,9 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             Defined in config/models/<model>.yaml
         shard_strategy : str, optional
             Strategy to shard tensors, by default "edges"
+        dynamic_mode: bool, optional
+            If this arg is set to True, mappers expect graph during forward 
+            to enable multi-domain training. 
         """
         super().__init__(
             in_channels_src=in_channels_src,
@@ -268,10 +279,23 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         self.num_chunks = num_chunks
 
         Linear = self.layer_factory.Linear
+        if dynamic_mode:
+            assert edge_dim != 0, f"Expecting non zero value for edge_dim, got: {edge_dim}"
+            assert sub_graph_edge_index_name is not None, f"Expecting a value to be set, got None"
+            
+            self.edge_dim = edge_dim
+            self.sub_graph_edge_index_name = sub_graph_edge_index_name
+            self.sub_graph_edge_attributes = sub_graph_edge_attributes
+            # Notice TrainableTensor is by default removed, we dont want to tie the model to the grid
+        
+        else:
+            assert sub_graph is not None, , f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
+            assert sub_graph_edge_attributes is not None, , f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
+            assert src_size is not None , f"dynamic_mode set to f{dynamic_mode}, expect src_grid_size type: int"
+            assert dst_grid_size is not None, f"dynamic_mode set to f{dynamic_mode}, expect dst_grid_size type: int"
 
-        self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
-
-        self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
+            self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
+            self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
 
         self.proc = GraphTransformerMapperBlock(
             in_channels=hidden_dim,
@@ -299,10 +323,18 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         self,
         size: tuple[int, int],
         batch_size: int,
-        model_comm_group: Optional[ProcessGroup] = None,
+        edge_attr: Optional[torch.Tensor] = None, 
+        edge_index: Optional[Adj] = None,
+        model_comm_group: Optional[ProcessGroup] = None
     ) -> tuple[Tensor, Adj]:
-        edge_attr = self.trainable(self.edge_attr, batch_size)
-        edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
+        # when edge_attr and edge_index are set --> multi-domain run
+        if not self.dynamic_mode:
+            edge_attr = self.trainable(self.edge_attr, batch_size)
+            edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
+        
+        assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
+        assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
+
         edge_attr, edge_index, shapes_edge_attr, shapes_edge_idx = sort_edges_1hop_sharding(
             size, edge_attr, edge_index, model_comm_group, relabel_dst_nodes=True
         )
@@ -320,6 +352,8 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
+        edge_attr: Optional[torch.Tensor] = None, 
+        edge_index: Optional[Adj] = None,
         cond: Optional[tuple[Tensor, Tensor]] = None,
     ):
         x_src, x_dst = x
@@ -330,7 +364,13 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         x_src = sync_tensor(x_src, 0, shapes_x_src, model_comm_group, gather_in_fwd=x_src_is_sharded)
 
         size_full_graph = (sum(shape[0] for shape in shard_shapes[0]), sum(shape[0] for shape in shard_shapes[1]))
-        edge_attr, edge_index = self.prepare_edges(size_full_graph, batch_size, model_comm_group)
+        edge_attr, edge_index = self.prepare_edges(
+            size_full_graph, 
+            batch_size, 
+            edge_attr,
+            edge_index,
+            model_comm_group
+            )
 
         # at this point, x_src is synced i.e. full, x_dst is sharded, edges are sharded (incoming edges to x_dst)
         size_src_full_dst_shard = (x_src.shape[0], x_dst.shape[0])
@@ -405,6 +445,8 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         x: PairTensor,
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
+        edge_attr: Optional[torch.Tensor] = None,
+        edge_index: Optional[Adj]=None
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
@@ -412,14 +454,18 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         cond: Optional[tuple[Tensor, Tensor]] = None,
         **kwargs,
     ) -> PairTensor:
+        # edge_attr and edge_index required for multi-domain 
+
         x_src, x_dst, edge_attr, edge_index, shapes_src, shapes_dst, cond = checkpoint(
             self.pre_process_edge_sharding_wrapper,
-            x,
+            x=x,
             shard_shapes,
             batch_size,
             model_comm_group,
             x_src_is_sharded,
             x_dst_is_sharded,
+            edge_attr,
+            edge_index,
             cond,
             use_reentrant=False,
         )
@@ -449,7 +495,9 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             ).to(dtype=out_type)
 
         if not keep_x_dst_sharded:  # gather after processing chunks
-            out_dst = gather_tensor(out_dst, 0, change_channels_in_shape(shapes_dst, out_channels), model_comm_group)
+            out_dst = gather_tensor(
+                out_dst, 0, change_channels_in_shape(shapes_dst, out_channels), model_comm_group
+                )
 
         return out_dst
 
@@ -458,15 +506,24 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         x: PairTensor,
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
+        edge_attr: Optional[torch.Tensor] = None, 
+        edge_index: Optional[Adj] = None, 
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
         keep_x_dst_sharded: bool = False,
         **kwargs,
     ) -> PairTensor:
+        if not self.dynamic_mode:
+            pass 
         size = (sum(x[0] for x in shard_shapes[0]), sum(x[0] for x in shard_shapes[1]))
-        edge_attr = self.trainable(self.edge_attr, batch_size)
-        edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
+        if not self.dynamic_mode:
+            edge_attr = self.trainable(self.edge_attr, batch_size)
+            edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
+
+        assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
+        assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
+
         shapes_edge_attr = get_shard_shapes(edge_attr, 0, model_comm_group)
         edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
 
@@ -494,6 +551,7 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         x: PairTensor,
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
+        sub_graph: HeteroData = None,
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
@@ -511,7 +569,15 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             "keep_x_dst_sharded": keep_x_dst_sharded,
             **kwargs,
         }
+        if sub_graph:
+            # sub graph exists i.e the graph is being sent through the forward mapper
+            # multi-domain mode is activated
 
+            # generating edge_indexes and edge_attr
+            kwargs_forward["edge_index"] = sub_graph[self.edge_index_name].to(torch.int64)
+            kwargs_forward["edge_attr"] = torch.cat(
+                [sub_graph[attr] for attr in self.edge_attribute_names], axis=1
+            )
         if self.shard_strategy == "edges":
             return self.mapper_forward_with_edge_sharding(**kwargs_forward)
         else:  # self.shard_strategy == "heads"
@@ -531,10 +597,11 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
         num_chunks: int,
         num_heads: int,
         mlp_hidden_ratio: int,
-        sub_graph: HeteroData,
         sub_graph_edge_attributes: list[str],
-        src_grid_size: int,
-        dst_grid_size: int,
+        sub_graph: Optional[HeteroData] = None,
+        sub_graph_edge_index_name: Optional[str] = None,
+        src_grid_size: Optional[int] = None,
+        dst_grid_size: Optional[int] = None,
         qk_norm: bool = False,
         cpu_offload: bool = False,
         layer_kernels: DotDict = None,
@@ -558,10 +625,12 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
             Number of heads in transformer
         mlp_hidden_ratio: int
             ratio of mlp hidden dimension to embedding dimension, default 4
-        sub_graph : HeteroData
-            Sub graph of the full structure
         sub_graph_edge_attributes : list[str]
             Edge attributes to use
+        sub_graph : HeteroData
+            Sub graph of the full structure
+        sub_graph_edge_index_name : str, optional
+            Name of the edge index attribute in the graph. Required for multi-domain. 
         src_grid_size : int
             Source grid size
         dst_grid_size : int
@@ -586,8 +655,10 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
             qk_norm=qk_norm,
             num_heads=num_heads,
             mlp_hidden_ratio=mlp_hidden_ratio,
-            sub_graph=sub_graph,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
+            sub_graph=sub_graph,
+            sub_graph_edge_index_name=sub_graph_edge_index_name,
+            edge_dim=edge_dim,
             src_grid_size=src_grid_size,
             dst_grid_size=dst_grid_size,
             layer_kernels=layer_kernels,
@@ -601,6 +672,7 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
         x: PairTensor,
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
+        sub_graph: Optional[HeteroData]=None,
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
@@ -611,6 +683,7 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
             x,
             batch_size,
             shard_shapes,
+            sub_graph,
             model_comm_group,
             x_src_is_sharded,
             x_dst_is_sharded,
@@ -634,10 +707,12 @@ class GraphTransformerBackwardMapper(BackwardMapperPostProcessMixin, GraphTransf
         num_chunks: int,
         num_heads: int,
         mlp_hidden_ratio: int,
-        sub_graph: HeteroData,
         sub_graph_edge_attributes: list[str],
-        src_grid_size: int,
-        dst_grid_size: int,
+        sub_graph: Optional[HeteroData] = None,
+        sub_graph_edge_index_name: Optional[str] = None,
+        src_grid_size: Optional[int] = None,
+        dst_grid_size: Optional[int] = None,
+        edge_dim: Optional[int] = None,
         qk_norm: bool = False,
         initialise_data_extractor_zero: bool = False,
         cpu_offload: bool = False,
@@ -697,14 +772,17 @@ class GraphTransformerBackwardMapper(BackwardMapperPostProcessMixin, GraphTransf
             mlp_hidden_ratio=mlp_hidden_ratio,
             sub_graph=sub_graph,
             sub_graph_edge_attributes=sub_graph_edge_attributes,
+            sub_graph_edge_index_name=sub_graph_edge_index_name,
             src_grid_size=src_grid_size,
             dst_grid_size=dst_grid_size,
+            edge_dim=edge_dim,
             layer_kernels=layer_kernels,
             shard_strategy=shard_strategy,
         )
 
         self.node_data_extractor = nn.Sequential(
-            nn.LayerNorm(self.hidden_dim), nn.Linear(self.hidden_dim, self.out_channels_dst)
+            nn.LayerNorm(self.hidden_dim), 
+            nn.Linear(self.hidden_dim, self.out_channels_dst)
         )
         if initialise_data_extractor_zero:
             for module in self.node_data_extractor.modules():
