@@ -71,6 +71,12 @@ class AnemoiTrainer:
 
             LOGGER.info("Skipping config validation.")
 
+        # Choose between single domain and multi-domain runs
+        self.dynamic_mode = self.config.model.dynamic_mode
+        assert isinstance(self.dynamic_mode,bool), f"dynamic_mode required type bool, got {self.dynamic_mode}"
+        if self.dynamic_mode:
+            self.config = self.get_processed_configs 
+
         self.start_from_checkpoint = (
             bool(self.config.training.run_id)
             or bool(self.config.training.fork_run_id)
@@ -95,6 +101,44 @@ class AnemoiTrainer:
 
         # Check for dry run, i.e. run id without data
         self._log_information()
+    @cached_property
+    def get_processed_configs(self) -> DictConfig:
+        """
+        Enable processing of multiple entries for different regions.
+
+        Example:
+            BaseStruct : {
+                cutout: 
+                - dataset: null <- LAM region
+                  area: null
+                - dataset: path/to/ERA5.zarr
+                adjust: all 
+                }
+
+            regional_domains:
+                MEPS: path/to/MEPS.zarr
+                area: [0,0,1,1]
+
+            is converted to: 
+
+            MEPS : {
+                cutout: 
+                - dataset: path/to/MEPS:zarr
+                  area: [0,0,11]
+                - dataset: path/to/ERA5.zarr
+                adjust: all 
+                }
+        args:
+            None
+        return:
+            OmegaConf.DictConfig with added regional data 
+            and corresponding information
+
+        """
+        from anemoi.training.utils.process_config import ProcessConfigs
+        pc = ProcessConfigs(base_config=self.config)
+        pc.process
+        return pc.update()
 
     @cached_property
     def datamodule(self) -> Any:
@@ -138,32 +182,13 @@ class AnemoiTrainer:
 
     @cached_property
     def graph_data(self) -> HeteroData:
-        """Graph data.
+        """
+        Graph data.
 
         Creates the graph in all workers.
         """
-        if self.config.hardware.files.graph is not None:
-            graph_filename = Path(
-                self.config.hardware.paths.graph,
-                self.config.hardware.files.graph,
-            )
-
-            if graph_filename.exists() and not self.config.graph.overwrite:
-                from anemoi.graphs.utils import get_distributed_device
-
-                LOGGER.info("Loading graph data from %s", graph_filename)
-                return torch.load(graph_filename, map_location=get_distributed_device(), weights_only=False)
-
-        else:
-            graph_filename = None
-
-        from anemoi.graphs.create import GraphCreator
-
-        graph_config = convert_to_omegaconf(self.config).graph
-        return GraphCreator(config=graph_config).create(
-            save_path=graph_filename,
-            overwrite=self.config.graph.overwrite,
-        )
+        from anemoi.training.utils.graph_setup import graph_setup
+        return graph_setup(self.config, self.dynamic_mode)
 
     @cached_property
     def truncation_data(self) -> dict:
@@ -171,17 +196,20 @@ class AnemoiTrainer:
 
         Loads truncation data.
         """
-        truncation_data = {}
-        if self.config.hardware.files.truncation is not None:
-            truncation_data["down"] = load_npz(
-                Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation),
-            )
-        if self.config.hardware.files.truncation_inv is not None:
-            truncation_data["up"] = load_npz(
-                Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation_inv),
-            )
+        if not self.dynamic_mode:
+            truncation_data = {}
+            if self.config.hardware.files.truncation is not None:
+                truncation_data["down"] = load_npz(
+                    Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation),
+                )
+            if self.config.hardware.files.truncation_inv is not None:
+                truncation_data["up"] = load_npz(
+                    Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation_inv),
+                )
 
-        return truncation_data
+            return truncation_data
+        else:
+            return 
 
     @cached_property
     def model(self) -> pl.LightningModule:
