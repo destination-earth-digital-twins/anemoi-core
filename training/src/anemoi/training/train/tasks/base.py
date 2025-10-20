@@ -161,9 +161,19 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         """
         super().__init__()
+        self.dynamic_mode = config.model.dynamic_mode
 
-        graph_data = graph_data.to(self.device)
+        if dynamic_mode:
+            # we dont want to place the graphs on the gpu 
+            # due to on-/offloading of the graph
+            LOGGER.info("Dynamic mode enabled. Graph is not placed on the GPU in GraphBaseModule")
+            pass 
+        else:
+            # send to gpu 
+            LOGGER.info("Dynamic mode disabled. Graph is placed on the GPU in GraphBaseModule")
+            graph_data = graph_data.to(self.device)
 
+        #TODO: check this out
         self.output_mask = instantiate(config.model_dump(by_alias=True).model.output_mask, graph_data=graph_data)
 
         self.model = AnemoiModelInterface(
@@ -181,26 +191,52 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         self.save_hyperparameters()
 
-        self.latlons_data = graph_data[config.graph.data].x
+        if dynamic_mode:
+            self.latlons_data = {
+            label: graph_data[label][config.graph.data].x for label in graph_data.keys()
+            }
+        else:
+            self.latlons_data = graph_data[config.graph.data].x
+        
+        # TODO: check this out
         self.statistics_tendencies = statistics_tendencies
 
         self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
 
+        # TODO: check this out, maybe we need a dict of metadata_extractor
         metadata_extractor = ExtractVariableGroupAndLevel(
             variable_groups=config.model_dump(by_alias=True).training.variable_groups,
             metadata_variables=metadata["dataset"].get("variables_metadata"),
         )
 
         # Instantiate all scalers with the training configuration
-        self.scalers, self.updating_scalars = create_scalers(
-            config.model_dump(by_alias=True).training.scalers,
-            data_indices=data_indices,
-            graph_data=graph_data,
-            statistics=statistics,
-            statistics_tendencies=statistics_tendencies,
-            metadata_extractor=metadata_extractor,
-            output_mask=self.output_mask,
-        )
+        if dynamic_mode:
+            LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
+            self.scalers = {}
+            self.updating_scalars = {}
+
+            for label, G in graph_data.items():
+                self.scalers[label], self.updating_scalars[label] = self.scalers, self.updating_scalars = create_scalers(
+                    config.model_dump(by_alias=True).training.scalers,
+                    data_indices=data_indices,
+                    graph_data=graph_data[label],
+                    statistics=statistics,
+                    statistics_tendencies=statistics_tendencies,
+                    metadata_extractor=metadata_extractor,
+                    output_mask=self.output_mask,
+                )
+        
+        else:
+            LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
+            self.scalers, self.updating_scalars = create_scalers(
+                config.model_dump(by_alias=True).training.scalers,
+                data_indices=data_indices,
+                graph_data=graph_data,
+                statistics=statistics,
+                statistics_tendencies=statistics_tendencies,
+                metadata_extractor=metadata_extractor,
+                output_mask=self.output_mask,
+            )
 
         self.val_metric_ranges = get_metric_ranges(
             config,
@@ -299,8 +335,16 @@ class BaseGraphModule(pl.LightningModule, ABC):
         self.grid_shard_slice = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.dynamic_mode and isinstance(x, tuple):
+            assert len(x) == 2, f"Something went wrong, expecting tuple[torch.Tensor, str:graph_label]"
+            x_input, graph_label = x
+        else:
+            x_input = x 
+            graph_label = None 
+
         return self.model(
             x,
+            graph_label,
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
         )
