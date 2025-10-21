@@ -28,8 +28,8 @@ LOGGER = logging.getLogger(__name__)
 # Future import breaks other type hints TODO Harrison Cook
 def get_loss_function(
     config: DictConfig,
-    scalers: dict[str, TENSOR_SPEC] | None = None,
-    data_indices: dict | None = None,
+    scalers: dict[dict[str,TENSOR_SPEC]] | dict[str, TENSOR_SPEC] | None = None,
+    data_indices: dict[dict] | dict | None = None,
     **kwargs,
 ) -> BaseLoss:
     """Get loss functions from config.
