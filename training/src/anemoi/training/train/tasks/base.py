@@ -204,10 +204,17 @@ class BaseGraphModule(pl.LightningModule, ABC):
         self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
 
         # TODO: check this out, maybe we need a dict of metadata_extractor
-        metadata_extractor = ExtractVariableGroupAndLevel(
-            variable_groups=config.model_dump(by_alias=True).training.variable_groups,
-            metadata_variables=metadata["dataset"].get("variables_metadata"),
-        )
+        if dynamic_mode:
+            metadata_extractor = {}
+            metadata_extractor = ExtractVariableGroupAndLevel(
+                variable_groups=config.model_dump(by_alias=True).training.variable_groups,
+                metadata_variables=metadata["dataset"].get("variables_metadata"),
+            )
+        else:
+            metadata_extractor = ExtractVariableGroupAndLevel(
+                variable_groups=config.model_dump(by_alias=True).training.variable_groups,
+                metadata_variables=metadata["dataset"].get("variables_metadata"),
+            )
 
         # Instantiate all scalers with the training configuration
         if dynamic_mode:
@@ -554,6 +561,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after transfer
         """
+        batch, graph_label = batch 
+
         # Gathering/sharding of batch
         batch = self._setup_batch_sharding(batch)
 
@@ -581,6 +590,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after setup
         """
+        batch, graph_label = batch 
+
         if self.keep_batch_sharded and self.model_comm_group_size > 1:
             self.grid_shard_shapes = self.grid_indices.shard_shapes
             self.grid_shard_slice = self.grid_indices.get_shard_slice(self.reader_group_rank)
@@ -749,7 +760,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         """
         del batch_idx
-
+        batch, graph_label = batch 
         with torch.no_grad():
             val_loss, metrics, y_preds = self._step(batch, validation_mode=True)
 
