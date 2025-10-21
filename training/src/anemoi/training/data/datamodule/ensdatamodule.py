@@ -19,7 +19,21 @@ LOGGER = logging.getLogger(__name__)
 
 
 class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
-    """Anemoi Ensemble data module for PyTorch Lightning."""
+    """
+    Anemoi Ensemble data module for PyTorch Lightning.
+    Inherits from parent class AnemoiDatasetsDataModule.
+    
+    Constructor and its method are inherited from AnemoiDatasetsDataModule,
+    required parameters:
+    
+    Parameters
+        ----------
+        config : BaseSchema
+            Job configuration
+        graph_data: HeteroData
+            graph and its information
+
+    """
 
     def _get_dataset(
         self,
@@ -28,8 +42,16 @@ class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
         val_rollout: int = 1,
         label: str = "generic",
     ) -> EnsNativeGridDataset:
-
-        data_reader = self.add_trajectory_ids(data_reader)  # NOTE: Functionality to be moved to anemoi datasets
+        # TODO: revist this
+        if isinstance(data_reader, dict) and self.dynamic_mode:
+            data_reader = {
+                label : open_dataset(data_set_config) for label, dataset_config in data_reader.items()
+                }
+            data_reader = {
+                label : self.add_trajectory_ids(reader) for label, reader in data_reader.items()
+            }
+        else:
+            data_reader = self.add_trajectory_ids(data_reader)  # NOTE: Functionality to be moved to anemoi datasets
 
         return EnsNativeGridDataset(
             data_reader=data_reader,
