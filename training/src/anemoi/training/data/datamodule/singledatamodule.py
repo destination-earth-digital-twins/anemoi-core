@@ -32,45 +32,65 @@ LOGGER = logging.getLogger(__name__)
 class AnemoiDatasetsDataModule(pl.LightningDataModule):
     """Anemoi Datasets data module for PyTorch Lightning."""
 
-    def __init__(self, config: BaseSchema, graph_data: HeteroData) -> None:
+    def __init__(self, config: BaseSchema, graph_data: dict[HeteroData] | HeteroData) -> None:
         """Initialize Anemoi Datasets data module.
 
         Parameters
         ----------
         config : BaseSchema
             Job configuration
+        graph_data: HeteroData
+            graph and its information 
+
 
         """
+        # TODO: Revisit this
         super().__init__()
 
         self.config = config
+        self.dynamic_mode = self.config.model.dynamic_mode
         self.graph_data = graph_data
 
         # Set the training end date if not specified
-        if self.config.dataloader.training.end is None:
-            LOGGER.info(
-                "No end date specified for training data, setting default before validation start date %s.",
-                self.config.dataloader.validation.start - 1,
-            )
-            self.config.dataloader.training.end = self.config.dataloader.validation.start - 1
+        self.dynamic_mode:
+            resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
+            for dataset_label in resolved_training_conf:
+                if resolved_training_conf[dataset_label]["end"] is None:
+                    LOGGER.info(
+                        "No end date specified for training data, setting default before validation start date %s.",
+                        resolved_training_conf[dataset_label]["start"] - 1,
+                    )
+                resolved_training_conf[dataset_label]["end"] = resolved_training_conf[dataset_label]["start"] - 1
+            # TODO: fix this..
+        else:
+            if self.config.dataloader.training.end is None:
+                LOGGER.info(
+                    "No end date specified for training data, setting default before validation start date %s.",
+                    self.config.dataloader.validation.start - 1,
+                )
+                self.config.dataloader.training.end = self.config.dataloader.validation.start - 1
 
         if not self.config.dataloader.pin_memory:
             LOGGER.info("Data loader memory pinning disabled.")
 
     @cached_property
     def statistics(self) -> dict:
+        # TODO: should it be a collection statistics..?
         return self.ds_train.statistics
 
     @cached_property
     def statistics_tendencies(self) -> dict:
+        # TODO: should it be a collection tendencies?
         return self.ds_train.statistics_tendencies
 
     @cached_property
     def metadata(self) -> dict:
+        # TODO: should it be a collection of metadata i.e dict of metadata..?
         return self.ds_train.metadata
 
     @cached_property
     def supporting_arrays(self) -> dict:
+        # TODO: find out where this is used. Should this be disabled..=
         return self.ds_train.supporting_arrays | self.grid_indices.supporting_arrays
 
     @cached_property
@@ -135,14 +155,40 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     @cached_property
     def grid_indices(self) -> type[BaseGridIndices]:
+        """
+        Creates grid_indices object for a given graph structure.
+        Notice when dynamic_mode is enabled, multiple grid_indices
+        object is created per label and graph.
+
+        args:
+            None
+        return:
+            grid_indices object | dict of grid_indices objects
+
+        """
         reader_group_size = self.config.dataloader.read_group_size
 
-        grid_indices = instantiate(
-            self.config.dataloader.grid_indices,
-            reader_group_size=reader_group_size,
-        )
-        grid_indices.setup(self.graph_data)
-        return grid_indices
+        if self.dynamic_mode:
+            grid_indices_dict = {}
+            for graph_label, graph in self.graph_data.items():
+                # I think we may need to create an grid_indices object
+                # per label. TODO: Investigate this
+
+                grid_indices = instantiate(
+                    self.config.dataloader.grid_indices,
+                    reader_group_size=reader_group_size,
+                )
+                grid_indices.setup(graph)
+                grid_indices_dict[graph_label] = grid_indices
+            
+            return grid_indices_dict
+        else:
+            grid_indices = instantiate(
+                self.config.dataloader.grid_indices,
+                reader_group_size=reader_group_size,
+            )
+            grid_indices.setup(self.graph_data)
+            return grid_indices
 
     @cached_property
     def timeincrement(self) -> int:
@@ -175,20 +221,23 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     @cached_property
     def ds_train(self) -> NativeGridDataset:
         return self._get_dataset(
-            open_dataset(self.config.dataloader.training),
+            self.config.dataloader.training if self.dynamic else open_dataset(self.config.dataloader.training),
             label="train",
         )
 
     @cached_property
     def ds_valid(self) -> NativeGridDataset:
-        if not self.config.dataloader.training.end < self.config.dataloader.validation.start:
-            LOGGER.warning(
-                "Training end date %s is not before validation start date %s.",
-                self.config.dataloader.training.end,
-                self.config.dataloader.validation.start,
-            )
+        if self.dynamic_mode:
+            LOGGER.info("Dynamic mode enabled. validation.start can now be less than training.end")
+        else:
+            if not self.config.dataloader.training.end < self.config.dataloader.validation.start:
+                LOGGER.warning(
+                    "Training end date %s is not before validation start date %s.",
+                    self.config.dataloader.training.end,
+                    self.config.dataloader.validation.start,
+                )
         return self._get_dataset(
-            open_dataset(self.config.dataloader.validation),
+            self.config.dataloader.validation if self.dynamic_mode else open_dataset(self.config.dataloader.validation),
             shuffle=False,
             val_rollout=self.config.dataloader.validation_rollout,
             label="validation",
@@ -212,13 +261,20 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     def _get_dataset(
         self,
-        data_reader: Callable,
+        data_reader: dict[str] | Callable,
         shuffle: bool = True,
         val_rollout: int = 1,
         label: str = "generic",
     ) -> NativeGridDataset:
-
-        data_reader = self.add_trajectory_ids(data_reader)  # NOTE: Functionality to be moved to anemoi datasets
+        if isinstance(data_reader, dict) and self.dynamic_mode:
+            data_reader = {
+                label : open_dataset(data_set_config) for label, dataset_config in data_reader.items()
+                }
+            data_reader = {
+                label : self.add_trajectory_ids(reader) for label, reader in data_reader.items()
+            }
+        else:
+            data_reader = self.add_trajectory_ids(data_reader)  # NOTE: Functionality to be moved to anemoi datasets
 
         return NativeGridDataset(
             data_reader=data_reader,
