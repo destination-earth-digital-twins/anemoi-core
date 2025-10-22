@@ -4,6 +4,8 @@ from collections import defaultdict
 import hydra
 from omegaconf import OmegaConf, DictConfig
 
+from anemoi.training.schemas.base_schema import convert_to_omegaconf
+
 
 class ProcessConfigs:
     SENTINEL = object()
@@ -21,6 +23,8 @@ class ProcessConfigs:
         returns:
             None
         """
+        #base_config = convert_to_omegaconf(base_config) 
+        OmegaConf.resolve(base_config)
         self.config = OmegaConf.to_container(base_config, resolve=True)
 
         self.struct = self.config["dataloader"]
