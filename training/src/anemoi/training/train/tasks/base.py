@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from abc import ABC
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import pytorch_lightning as pl
 import torch
@@ -177,19 +177,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
             )
             graph_data = graph_data.to(self.device)
 
-        if self.dynamic_mode:
-            self.output_mask = {
-                label: instantiate(
+        self.output_mask: torch.nn.Module | dict[str, torch.nn.Module] = self._mapper(
+            lambda G: instantiate(
                     config.model_dump(by_alias=True).model.output_mask, graph_data=G
-                )
-                for label, G in graph_data.items()
-            }
-        else:
-            # TODO: check this out
-            self.output_mask = instantiate(
-                config.model_dump(by_alias=True).model.output_mask,
-                graph_data=graph_data,
-            )
+                ), graph_data
+        )
 
         self.model = AnemoiModelInterface(
             statistics=statistics,
@@ -206,14 +198,10 @@ class BaseGraphModule(pl.LightningModule, ABC):
         self.data_indices = data_indices
 
         self.save_hyperparameters()
-
-        if self.dynamic_mode:
-            self.latlons_data = {
-                label: graph_data[label][config.graph.data].x
-                for label in graph_data.keys()
-            }
-        else:
-            self.latlons_data = graph_data[config.graph.data].x
+        
+        self.latlons_data = self.mapper(
+            lambda G: G[config.graph.data].x, graph_data
+        )
 
         # TODO: check this out
         self.statistics_tendencies = statistics_tendencies
@@ -224,116 +212,89 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
 
         # TODO: check this out, maybe we need a dict of metadata_extractor
-        if self.dynamic_mode:
-            metadata_extractor = {}
-            for label, _metadata in metadata.items():
-                metadata_extractor[label] = ExtractVariableGroupAndLevel(
-                    variable_groups=config.model_dump(
-                        by_alias=True
-                    ).training.variable_groups,
-                    metadata_variables=_metadata.get("variables_metadata"),
-                )
-        else:
-            metadata_extractor = ExtractVariableGroupAndLevel(
+
+        metadata_extractor = self._mapper(
+            lambda _metadata: ExtractVariableGroupAndLevel(
                 variable_groups=config.model_dump(
                     by_alias=True
                 ).training.variable_groups,
-                metadata_variables=metadata["dataset"].get("variables_metadata"),
-            )
-
+                metadata_variables=_metadata.get("variables_metadata") if self.dynamic_mode else metadata["dataset"].get("variables_metadata"),
+            ), metadata
+        )
         # Instantiate all scalers with the training configuration
-        if self.dynamic_mode:
-            LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
-            self.scalers = {}
-            self.updating_scalars = {}
-
-            for label in graph_data.keys():
-                self.scalers[label], self.updating_scalars[label] = create_scalers(
+        # working for both dynamic and static mode
+        self.scalers_and_updating_scalars = self.mapper(
+                lambda _G, _S, _ST, _ME, _OM: create_scalers(
                     config.model_dump(by_alias=True).training.scalers,
                     data_indices=data_indices,
-                    graph_data=graph_data[label],
-                    statistics=statistics[label],
-                    statistics_tendencies=statistics_tendencies[label],
-                    metadata_extractor=metadata_extractor[label],
-                    output_mask=self.output_mask[label],
-                )
-
-        else:
-            LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
-            self.scalers, self.updating_scalars = create_scalers(
-                config.model_dump(by_alias=True).training.scalers,
-                data_indices=data_indices,
-                graph_data=graph_data,
-                statistics=statistics,
-                statistics_tendencies=statistics_tendencies,
-                metadata_extractor=metadata_extractor,
-                output_mask=self.output_mask,
+                    graph_data=_G,
+                    statistics=_S,
+                    statistics_tendencies=_ST,
+                    metadata_extractor=_ME,
+                    output_mask=_OM,
+                ),
+                graph_data, 
+                statistics, 
+                statistics_tendencies, 
+                metadata_extractor, 
+                self.output_mask
             )
-
+        
         if self.dynamic_mode:
-            # TODO: not too happy about this... revisit later, try find a better way to do this.
-            self.val_metric_ranges = {}
-            self.loss = {}
-            self._scaling_values_log = {}
-            self.metrics = {}
-            for label in graph_data.keys():
-                self.val_metric_ranges[label] = get_metric_ranges(
-                    config,
-                    data_indices,
-                    metadata_extractor=metadata_extractor[label],
-                )
 
-                self.loss[label] = get_loss_function(
-                    config.model_dump(by_alias=True).training.training_loss,
-                    scalers=self.scalers[label],
-                    data_indices=self.data_indices,
-                )
-                self._scaling_values_log[label] = print_variable_scaling(
-                    self.loss[label],
-                    data_indices,
-                )
-
-                self.metrics[label] = torch.nn.ModuleDict(
-                    {
-                        metric_name: get_loss_function(
-                            val_metric_config,
-                            scalers=self.scalers[label],
-                            data_indices=self.data_indices,
-                        )
-                        for metric_name, val_metric_config in config.model_dump(
-                            by_alias=True,
-                        ).training.validation_metrics.items()
-                    },
-                )
+            self.scalers = {
+                label: _value[0]
+                for label, _value in self.scalers_and_updating_scalars.items()
+            }
+            self.updating_scalars ={
+                label: _value[1]
+                for label, _value in self.scalers_and_updating_scalars.items()
+            }
         else:
-            self.val_metric_ranges = get_metric_ranges(
+            self.scalers = self.scalers_and_updating_scalars[0]
+            self.updating_scalars = self.scalers_and_updating_scalars[1]  
+
+
+        self.val_metric_ranges = self._mapper(
+            lambda ME: get_metric_ranges(
                 config,
                 data_indices,
-                metadata_extractor=metadata_extractor,
-            )
+                metadata_extractor=ME,
+            ), metadata_extractor
+        )
 
-            self.loss = get_loss_function(
+        # do we need N losses? where N is number of graphs/domain.
+        self.loss = self._mapper(
+            lambda _scalers : get_loss_function(
                 config.model_dump(by_alias=True).training.training_loss,
-                scalers=self.scalers,
+                scalers=_scalers,
                 data_indices=self.data_indices,
+                ),
+            self.scalers
             )
-            self._scaling_values_log = print_variable_scaling(
-                self.loss,
+        
+        self._scaling_values_log[label] = self._mapper(
+            lambda _loss: print_variable_scaling(
+                _loss,
                 data_indices,
-            )
+            ), self.loss
+        )
 
-            self.metrics = torch.nn.ModuleDict(
+        self.metrics = self._mapper(
+            lambda _scaler: torch.nn.ModuleDict(
                 {
                     metric_name: get_loss_function(
                         val_metric_config,
-                        scalers=self.scalers,
+                        scalers=_scaler,
                         data_indices=self.data_indices,
                     )
                     for metric_name, val_metric_config in config.model_dump(
-                        by_alias=True,
+                        by_alias=True
                     ).training.validation_metrics.items()
-                },
-            )
+                }
+            ),
+            self.scalers,
+        )
 
         if config.training.loss_gradient_scaling:
             self.loss.register_full_backward_hook(grad_scaler, prepend=False)
@@ -437,6 +398,41 @@ class BaseGraphModule(pl.LightningModule, ABC):
             grid_shard_shapes=self.grid_shard_shapes,
         )
 
+    def _mapper(
+        self, 
+        fn: Callable, 
+        *_input: tuple[dict[Any]] | Any, 
+        *args: Any, 
+        **kwargs: Any
+        ) -> Any:
+        """Apply a function to items of a dict or a single object.
+
+        If dynamic_mode=True, calls `fn(label, value, *args, **kwargs)` for each item.
+        Otherwise, calls `fn(None, _dict, *args, **kwargs)` once.
+
+        Parameters
+        ----------
+        _input : tuple[dict[Any]] | Any
+            Dictionary to map over (or single object if not dynamic_mode)
+        fn : Callable
+            Function to apply per element: fn(label, value, *args, **kwargs)
+        *args, **kwargs
+            Extra arguments passed to fn
+        """
+        if self.dynamic_mode:
+            if len(_input) >= 1 and all(isinstance(i, dict) for i in _input):
+                _keys = list(_input[0].keys())
+
+                for entry in _input[1:]:
+                    assert _keys == list(entry.keys()), "All dicts must share the same domains (keys)"
+            else:
+                raise ValueError(f"Expected multiple tuple of dicts or a tuple of single dict, got {len(_input)}")
+            return {label: fn(*[obj[k] for obj in _input], *args, **kwargs) 
+                    for label in _keys
+            }
+        else:
+            return fn(*_input, *args, **kwargs)
+
     def on_load_checkpoint(self, checkpoint: torch.nn.Module) -> None:
         self._ckpt_model_name_to_index = checkpoint["hyper_parameters"][
             "data_indices"
@@ -444,6 +440,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
     def update_scalers(self, callback: AvailableCallbacks) -> None:
         """Update scalers, calling the defined function on them, updating if not None."""
+
+        # TODO: investigate if this needs to be compatible with dynamic mode!
+
         for name, scaler_builder in self.updating_scalars.items():
             scaler = scaler_builder.update_scaling_values(callback, model=self.model)
             if scaler is None:  # If scalar is None, no update to be applied
@@ -508,6 +507,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
         tuple[torch.Tensor, torch.Tensor, slice | None]
             Prepared y_pred, y, and grid_shard_slice
         """
+        
+        # TODO: investigate if this needs to be compatible with dynamic mode!
+
         is_sharded = self.grid_shard_slice is not None
 
         sharding_supported = (self.loss_supports_sharding or validation_mode) and (
@@ -558,6 +560,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Computed loss
         """
+
+        # TODO: investigate if this needs to be compatible with dynamic mode!
+
         return self.loss(
             y_pred,
             y,
