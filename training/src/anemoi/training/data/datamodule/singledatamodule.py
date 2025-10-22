@@ -76,16 +76,32 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     @cached_property
     def statistics(self) -> dict:
         # TODO: should it be a collection statistics..?
+        if self.dynamic_mode:
+            _statistics = {
+                label : domain.statistics for label, domain in self.ds_train.items()
+            }
+            return _statistics
         return self.ds_train.statistics
 
     @cached_property
     def statistics_tendencies(self) -> dict:
         # TODO: should it be a collection tendencies?
+        if self.dynamic_mode:
+            _statistics_tendencies = {
+                label : domain.statistics_tendencies for label, domain in self.ds_train.items()
+            }
+            return _statistics_tendencies
         return self.ds_train.statistics_tendencies
 
     @cached_property
     def metadata(self) -> dict:
         # TODO: should it be a collection of metadata i.e dict of metadata..?
+        if self.dynamic_mode:
+            _metadata = {
+                label : domain.metadata for label, domain in self.ds_train.items()
+            }
+            return _metadata
+            
         return self.ds_train.metadata
 
     @cached_property
@@ -95,6 +111,17 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     @cached_property
     def data_indices(self) -> IndexCollection:
+        if self.dynamic_mode:
+            _all_indices = {
+                label : domain.name_to_index for label, domain in self.ds_train.items()
+                } 
+
+            assert all(
+                d == next(iter(_all_indices.values())) for d in _all_indices.values()
+            ), "Index dicts do not match!"  
+            LOGGER.debug("All data indices")
+            return IndexCollection(self.config, next(iter(_all_indices.values()))) 
+
         return IndexCollection(self.config, self.ds_train.name_to_index)
 
     def relative_date_indices(self, val_rollout: int = 1) -> list:
