@@ -15,17 +15,15 @@ from typing import Optional, Dict
 
 import einops
 import torch
-from hydra.utils import instantiate
-from torch import Tensor
 from torch import nn
+from hydra.utils import instantiate
 from torch.distributed.distributed_c10d import ProcessGroup
-from torch.utils.checkpoint import checkpoint
 from torch_geometric.data import HeteroData
 
-from anemoi.models.distributed.shapes import get_shape_shards
-from anemoi.models.layers.graph import NamedNodesAttributes
-from anemoi.models.layers.utils import load_layer_kernels
-from anemoi.models.models import AnemoiModelEncProcDec, AnemoiEnsDatasetsDataModule
+from anemoi.models.distributed.graph import shard_tensor
+from anemoi.models.distributed.shapes import get_or_apply_shard_shapes
+from anemoi.models.distributed.shapes import get_shard_shapes
+from anemoi.models.models import AnemoiModelEncProcDec
 from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
@@ -35,12 +33,12 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         self,
         *,
         model_config: DotDict,
-        data_indices: Dict[dict],
-        statistics, Dict[dict],
+        data_indices: dict,
+        statistics: Dict[dict],
         graph_data: Dict[HeteroData],
         truncation_data: Dict[dict], 
     ) -> None:
-      """
+        """
         Initializes Determinstic Multi-Domain.
 
         Parameters
@@ -198,6 +196,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         return x_out
 
     def forward(
+        self,
         x: torch.Tensor, 
         graph_label: str, 
         *,
@@ -205,10 +204,10 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         model_comm_group: Optional[ProcessGroup]= None,
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
-        ) -> torch.Tensor:
+    ) -> torch.Tensor:
 
-        batch_size = batch.shape[0]
-        ensemble_size = batch.shape[2]
+        batch_size = x.shape[0]
+        ensemble_size = x.shape[2]
 
         graph = self.graph_data[graph_label]
         graph.to(x.device)
@@ -220,7 +219,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             x, batch_size, grid_shard_shapes, model_comm_group
         )
 
-        x_hidden_latent, sharp_shapes_hiddem = self._assemble_hidden_latent(
+        x_hidden_latent, shard_shapes_hidden = self._assemble_hidden_latent(
             x, graph, batch_size, model_comm_group,
         )
 
@@ -271,12 +270,12 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         self,
         *,
         model_config: DotDict,
-        data_indices: Dict[dict],
-        statistics, Dict[dict],
+        data_indices: dict,
+        statistics: Dict[dict],
         graph_data: Dict[HeteroData],
         truncation_data: Dict[dict], 
     ) -> None:
-      """
+        """
         Initializes Ensemble Multi-Domain.
 
         Parameters
@@ -472,26 +471,26 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         return x_out
 
 
-class MultiDomain(nn.Module):
+class AnemoiMultiDomain(nn.Module):
     def __init__(    
         self,
         *,
         model_config: DotDict,
-        data_indices: Dict[dict],
-        statistics, Dict[dict],
+        data_indices: dict,
+        statistics: Dict[dict],
         graph_data: Dict[HeteroData],
         truncation_data: Dict[dict], 
     ) -> None:
 
-    # This is the model interface
-    self.model = instantiate(
-        model_config.model.model_type,
-        model_config=model_config,
-        data_indices=data_indices,
-        statistics=statistics,
-        graph_data=graph_data,
-        truncation_data=truncation_data, 
-    )
+        # This is the model interface
+        self.model = instantiate(
+            model_config.model.model_type,
+            model_config=model_config,
+            data_indices=data_indices,
+            statistics=statistics,
+            graph_data=graph_data,
+            truncation_data=truncation_data, 
+        )
 
     
     def forward(
@@ -504,8 +503,8 @@ class MultiDomain(nn.Module):
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
     ) -> torch.Tensor:
-         """
-         Forward pass of the model.
+        """
+        Forward pass of the model.
 
         Parameters
         ----------
@@ -528,9 +527,10 @@ class MultiDomain(nn.Module):
         return self.model.forward(
             x, 
             graph_label, 
-            fcststep,
+            fcstep,
             model_comm_group, 
-            grid_shard_shapes
+            grid_shard_shapes,
+            **kwargs
             )
 
 
