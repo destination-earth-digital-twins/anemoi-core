@@ -7,7 +7,7 @@
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
 
-# should edit copyright to both ECMWF and DestinE (I think we should...)??? 
+# should edit copyright to both ECMWF and DestinE (I think we should...)???
 # TODO: ASK THOMAS
 
 import logging
@@ -28,15 +28,16 @@ from anemoi.utils.config import DotDict
 
 LOGGER = logging.getLogger(__name__)
 
-class DeterministicMultiDomain(AnemoiModelEncProcDec): 
-    def __init__(    
+
+class DeterministicMultiDomain(AnemoiModelEncProcDec):
+    def __init__(
         self,
         *,
         model_config: DotDict,
         data_indices: dict,
         statistics: Dict[dict],
         graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict], 
+        truncation_data: Dict[dict],
     ) -> None:
         """
         Initializes Determinstic Multi-Domain.
@@ -59,6 +60,17 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             statistics=statistics,
             graph_data=graph_data,
             truncation_data=truncation_data,
+        )
+
+        self.edge_dim = (
+            model_config.model.edge_dim
+            if hasattr(model_config.model, "edge_dim")
+            else 3
+        )
+        self.node_dim = (
+            model_config.model.node_dim
+            if hasattr(model_config.model, "node_dim")
+            else 4
         )
 
     def _calculate_input_dim(self):
@@ -101,77 +113,92 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         )
 
     def _assemble_input(
-        self, 
-        x: torch.Tensor, 
-        graph: HeteroData, 
-        batch_size: int, 
-        grid_shard_shapes: Optional[tuple]=None, 
-        model_comm_group: Optional[ProcessGroup]=None
-        ) -> torch.Tensor:
+        self,
+        x: torch.Tensor,
+        graph: HeteroData,
+        batch_size: int,
+        grid_shard_shapes: Optional[tuple] = None,
+        model_comm_group: Optional[ProcessGroup] = None,
+    ) -> torch.Tensor:
         x_skip = x[:, -1, ...]
-        x_skip = einops.rearrange(x_skip, "batch ensemble grid vars -> (batch ensemble) grid vars")
+        x_skip = einops.rearrange(
+            x_skip, "batch ensemble grid vars -> (batch ensemble) grid vars"
+        )
         # TODO: find a solution for truncation matrix!
         x_skip = self.truncation(x_skip, grid_shard_shapes, model_comm_group)
-        x_skip = einops.rearrange(x_skip, "(batch ensemble) grid vars -> batch ensemble grid vars", batch=batch_size)
+        x_skip = einops.rearrange(
+            x_skip,
+            "(batch ensemble) grid vars -> batch ensemble grid vars",
+            batch=batch_size,
+        )
 
         node_attributes_data = torch.cat(
-                [
-                    torch.sin(graph[self._graph_name_data].x), 
-                    torch.cos(graph[self._graph_name_data].x)
-                ], 
-                dim = -1
-            )
-        
+            [
+                torch.sin(graph[self._graph_name_data].x),
+                torch.cos(graph[self._graph_name_data].x),
+            ],
+            dim=-1,
+        )
+
         # TODO: investigate if this correct and gives correct shapes...
         node_attributes_data = einops.repeat(
-            node_attributes_data, 
-            "grid -> grid batch_size", 
-            batch_size=batch_size
+            node_attributes_data, "grid -> grid batch_size", batch_size=batch_size
         )
 
         if grid_shard_shapes is not None:
             shard_shapes_nodes = get_or_apply_shard_shapes(
-                node_attributes_data, 0, shard_shapes_dim=grid_shard_shapes, model_comm_group=model_comm_group
+                node_attributes_data,
+                0,
+                shard_shapes_dim=grid_shard_shapes,
+                model_comm_group=model_comm_group,
             )
-            node_attributes_data = shard_tensor(node_attributes_data, 0, shard_shapes_nodes, model_comm_group)
+            node_attributes_data = shard_tensor(
+                node_attributes_data, 0, shard_shapes_nodes, model_comm_group
+            )
 
         # normalize and add data positional info (lat/lon)
         x_data_latent = torch.cat(
             (
-                einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
+                einops.rearrange(
+                    x,
+                    "batch time ensemble grid vars -> (batch ensemble grid) (time vars)",
+                ),
                 node_attributes_data,
             ),
             dim=-1,  # feature dimension
         )
         shard_shapes_data = get_or_apply_shard_shapes(
-            x_data_latent, 0, shard_shapes_dim=grid_shard_shapes, model_comm_group=model_comm_group
+            x_data_latent,
+            0,
+            shard_shapes_dim=grid_shard_shapes,
+            model_comm_group=model_comm_group,
         )
 
         return x_data_latent, x_skip, shard_shapes_data
 
     def _assemble_hidden_latent(
         self,
-        x: torch.Tensor, 
-        graph: HeteroData, 
-        batch_size: int, 
-        model_comm_group: Optional[ProcessGroup] = None
-        ) -> tuple[torch.Tensor, list]:
+        x: torch.Tensor,
+        graph: HeteroData,
+        batch_size: int,
+        model_comm_group: Optional[ProcessGroup] = None,
+    ) -> tuple[torch.Tensor, list]:
 
         x_hidden_latent = torch.cat(
             [
-                torch.sin(graph[self._graph_name_hidden].x), 
-                torch.cos(graph[self._graph_name_hidden].x)
-            ], 
-            dim = -1
+                torch.sin(graph[self._graph_name_hidden].x),
+                torch.cos(graph[self._graph_name_hidden].x),
+            ],
+            dim=-1,
         )
 
         x_hidden_latent = einops.repeat(
-            x_hidden_latent, 
-            "grid -> grid batch_size", 
-            batch_size=batch_size
+            x_hidden_latent, "grid -> grid batch_size", batch_size=batch_size
         )
 
-        shard_shapes_hidden = get_shard_shapes(x_hidden_latent, 0, model_comm_group=model_comm_group)
+        shard_shapes_hidden = get_shard_shapes(
+            x_hidden_latent, 0, model_comm_group=model_comm_group
+        )
 
         return x_hidden_latent, shard_shapes_hidden
 
@@ -197,11 +224,13 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
 
     def forward(
         self,
-        x: torch.Tensor, 
-        graph_label: str, 
+        x: torch.Tensor,
+        graph_label: str,
         *,
-        fcaststep: Optional[int] = None, # <--- deterministic does not use it, just place holder
-        model_comm_group: Optional[ProcessGroup]= None,
+        fcaststep: Optional[
+            int
+        ] = None,  # <--- deterministic does not use it, just place holder
+        model_comm_group: Optional[ProcessGroup] = None,
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -213,14 +242,19 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         graph.to(x.device)
 
         in_out_sharded = grid_shard_shapes is not None
-        self._assert_valid_sharding(batch_size, ensemble_size, in_out_sharded, model_comm_group)
+        self._assert_valid_sharding(
+            batch_size, ensemble_size, in_out_sharded, model_comm_group
+        )
 
         x_data_latent, x_skip, shard_shapes_data = self._assemble_input(
             x, batch_size, grid_shard_shapes, model_comm_group
         )
 
         x_hidden_latent, shard_shapes_hidden = self._assemble_hidden_latent(
-            x, graph, batch_size, model_comm_group,
+            x,
+            graph,
+            batch_size,
+            model_comm_group,
         )
 
         # Encoder
@@ -239,7 +273,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         x_latent_proc = self.processor(
             x_latent,
             batch_size=batch_size,
-            sub_graph=graph[(self._graph_name_hidden, "to", self._graph_name_hidden)]
+            sub_graph=graph[(self._graph_name_hidden, "to", self._graph_name_hidden)],
             shard_shapes=shard_shapes_hidden,
             model_comm_group=model_comm_group,
         )
@@ -251,7 +285,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         x_out = self.decoder(
             (x_latent_proc, x_data_latent),
             batch_size=batch_size,
-            sub_graph=graph[(self._graph_name_hidden, "to", self._graph_name_data)]
+            sub_graph=graph[(self._graph_name_hidden, "to", self._graph_name_data)],
             shard_shapes=(shard_shapes_hidden, shard_shapes_data),
             model_comm_group=model_comm_group,
             x_src_is_sharded=True,  # x_latent always comes sharded
@@ -264,16 +298,15 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         return x_out
 
 
-
 class EnsembleMultiDomain(DeterministicMultiDomain):
-    def __init__(    
+    def __init__(
         self,
         *,
         model_config: DotDict,
         data_indices: dict,
         statistics: Dict[dict],
         graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict], 
+        truncation_data: Dict[dict],
     ) -> None:
         """
         Initializes Ensemble Multi-Domain.
@@ -290,12 +323,9 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
             A dictonary of truncation matrices
         """
         super().__init__(
-            model_config,
-            data_indices,
-            statistics,
-            graph_data,
-            truncation_data
-        ) 
+            model_config, data_indices, statistics, graph_data, truncation_data
+        )
+
     def _calculate_input_dim(self):
         # TODO: ensure this is correct!!!!
         base_input_dim = super()._calculate_input_dim()
@@ -306,67 +336,88 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         super()._build_networks(model_config)
         self.noise_injector = instantiate(
             model_config.model.noise_injector,
-            _recursive_=False, 
+            _recursive_=False,
             num_channels=self.num_channels,
         )
-    
+
     def _assemble_input(
-        self, 
-        x: torch.Tensor, 
+        self,
+        x: torch.Tensor,
         graph: HeteroData,
-        fcstep: int, 
-        bse: int, 
-        grid_shard_shapes: Optional[tuple]=None, 
-        model_comm_group: Optional[ProcessGroup]=None
-        )-> torch.Tensor:
+        fcstep: int,
+        bse: int,
+        grid_shard_shapes: Optional[tuple] = None,
+        model_comm_group: Optional[ProcessGroup] = None,
+    ) -> torch.Tensor:
         x_skip = x[:, -1, :, :, self._internal_input_idx]
-        x_skip = einops.rearrange(x_skip, "batch ensemble grid vars -> (batch ensemble) grid vars")
+        x_skip = einops.rearrange(
+            x_skip, "batch ensemble grid vars -> (batch ensemble) grid vars"
+        )
         # TODO: find a solution for truncation matrix!
         x_skip = self.truncation(x_skip, grid_shard_shapes, model_comm_group)
 
         node_attributes_data = torch.cat(
-                [
-                    torch.sin(graph[self._graph_name_data].x), 
-                    torch.cos(graph[self._graph_name_data].x)
-                ], 
-                dim = -1
-            )
+            [
+                torch.sin(graph[self._graph_name_data].x),
+                torch.cos(graph[self._graph_name_data].x),
+            ],
+            dim=-1,
+        )
 
         # TODO: investigate if this correct and gives correct shapes...
         node_attributes_data = einops.repeat(
-            node_attributes_data, 
-            "grid -> grid bse", 
-            bse=bse
+            node_attributes_data, "grid -> grid bse", bse=bse
         )
 
         if grid_shard_shapes is not None:
             shard_shapes_nodes = get_or_apply_shard_shapes(
-                node_attributes_data, 0, shard_shapes_dim=grid_shard_shapes, model_comm_group=model_comm_group
+                node_attributes_data,
+                0,
+                shard_shapes_dim=grid_shard_shapes,
+                model_comm_group=model_comm_group,
             )
-            node_attributes_data = shard_tensor(node_attributes_data, 0, shard_shapes_nodes, model_comm_group)
+            node_attributes_data = shard_tensor(
+                node_attributes_data, 0, shard_shapes_nodes, model_comm_group
+            )
 
         # add data positional info (lat/lon)
         x_data_latent = torch.cat(
             (
-                einops.rearrange(x, "batch time ensemble grid vars -> (batch ensemble grid) (time vars)"),
+                einops.rearrange(
+                    x,
+                    "batch time ensemble grid vars -> (batch ensemble grid) (time vars)",
+                ),
                 einops.rearrange(x_skip, "bse grid vars -> (bse grid) vars"),
                 node_attributes_data,
             ),
             dim=-1,  # feature dimension
         )
         x_data_latent = torch.cat(
-            (x_data_latent, torch.ones(x_data_latent.shape[:-1], device=x_data_latent.device).unsqueeze(-1) * fcstep),
+            (
+                x_data_latent,
+                torch.ones(
+                    x_data_latent.shape[:-1], device=x_data_latent.device
+                ).unsqueeze(-1)
+                * fcstep,
+            ),
             dim=-1,
         )
         shard_shapes_data = get_or_apply_shard_shapes(
-            x_data_latent, 0, shard_shapes_dim=grid_shard_shapes, model_comm_group=model_comm_group
+            x_data_latent,
+            0,
+            shard_shapes_dim=grid_shard_shapes,
+            model_comm_group=model_comm_group,
         )
 
         return x_data_latent, x_skip, shard_shapes_data
 
     def _assemble_output(self, x_out, x_skip, batch_size, bse, dtype):
         x_out = einops.rearrange(x_out, "(bse n) f -> bse n f", bse=bse)
-        x_out = einops.rearrange(x_out, "(bs e) n f -> bs e n f", bs=batch_size).to(dtype=dtype).clone()
+        x_out = (
+            einops.rearrange(x_out, "(bs e) n f -> bs e n f", bs=batch_size)
+            .to(dtype=dtype)
+            .clone()
+        )
 
         # residual connection (just for the prognostic variables)
         x_out[..., self._internal_output_idx] += einops.rearrange(
@@ -381,7 +432,7 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         return x_out
 
     def forward(
-        self, 
+        self,
         x: torch.Tensor,
         graph_label: str,
         *,
@@ -409,7 +460,9 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         batch_size, ensemble_size = x.shape[0], x.shape[2]
         bse = batch_size * ensemble_size  # batch and ensemble dimensions are merged
         in_out_sharded = grid_shard_shapes is not None
-        self._assert_valid_sharding(batch_size, ensemble_size, in_out_sharded, model_comm_group)
+        self._assert_valid_sharding(
+            batch_size, ensemble_size, in_out_sharded, model_comm_group
+        )
 
         graph = self._graph_data[graph_label]
         graph.to(x.device)
@@ -472,14 +525,14 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
 
 
 class AnemoiMultiDomain(nn.Module):
-    def __init__(    
+    def __init__(
         self,
         *,
         model_config: DotDict,
         data_indices: dict,
         statistics: Dict[dict],
         graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict], 
+        truncation_data: Dict[dict],
     ) -> None:
 
         assert (
@@ -494,21 +547,19 @@ class AnemoiMultiDomain(nn.Module):
             data_indices=data_indices,
             statistics=statistics,
             graph_data=graph_data,
-            truncation_data=truncation_data, 
+            truncation_data=truncation_data,
         )
 
         assert isinstance(
             self.model, [EnsembleMultiDomain, DeterministicMultiDomain]
         ), f"Dynamic_mode enabled, please instaniate [EnsembleMultiDomain, DeterministicMultiDomain]. Abort.. "
 
-
-    
     def forward(
-        self, 
+        self,
         x: torch.Tensor,
         graph_label: str,
         *,
-        fcstep: Optional[int] = None, 
+        fcstep: Optional[int] = None,
         model_comm_group: Optional[ProcessGroup] = None,
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
@@ -535,12 +586,5 @@ class AnemoiMultiDomain(nn.Module):
         """
 
         return self.model.forward(
-            x, 
-            graph_label, 
-            fcstep,
-            model_comm_group, 
-            grid_shard_shapes,
-            **kwargs
-            )
-
-
+            x, graph_label, fcstep, model_comm_group, grid_shard_shapes, **kwargs
+        )
