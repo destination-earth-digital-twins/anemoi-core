@@ -1,0 +1,28 @@
+defaults:
+  - model: graphtransformer_ens
+
+dynamic_mode: True # Enables multi-domain
+
+node_dim: 4 
+edge_dim: 3
+
+# For further modification please add sections you want to override in default
+# graphtransformer_ens config file as listed above
+
+model:
+  _target_: anemoi.models.models.AnemoiMultiDomain
+
+model_type:
+  _target_: anemoi.models.models.AnemoiMultiDomain.EnsembleMultiDomain
+
+processor:
+  edge_dim: ${model.edge_dim}
+
+encoder:
+  edge_dim: ${model.edge_dim}
+
+decoder:
+  edge_dim: ${model.edge_dim}
+
+
+
