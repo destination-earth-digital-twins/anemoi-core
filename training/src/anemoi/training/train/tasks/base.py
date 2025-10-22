@@ -163,25 +163,41 @@ class BaseGraphModule(pl.LightningModule, ABC):
         super().__init__()
         self.dynamic_mode = config.model.dynamic_mode
 
-        if dynamic_mode:
-            # we dont want to place the graphs on the gpu 
+        if self.dynamic_mode:
+            # we dont want to place the graphs on the gpu
             # due to on-/offloading of the graph
-            LOGGER.info("Dynamic mode enabled. Graph is not placed on the GPU in GraphBaseModule")
-            pass 
+            LOGGER.info(
+                "Dynamic mode enabled. Graph is not placed on the GPU in GraphBaseModule"
+            )
+            pass
         else:
-            # send to gpu 
-            LOGGER.info("Dynamic mode disabled. Graph is placed on the GPU in GraphBaseModule")
+            # send to gpu
+            LOGGER.info(
+                "Dynamic mode disabled. Graph is placed on the GPU in GraphBaseModule"
+            )
             graph_data = graph_data.to(self.device)
 
-        #TODO: check this out
-        self.output_mask = instantiate(config.model_dump(by_alias=True).model.output_mask, graph_data=graph_data)
+        if self.dynamic_mode:
+            self.output_mask = {
+                label: instantiate(
+                    config.model_dump(by_alias=True).model.output_mask, graph_data=G
+                )
+                for label, G in graph_data.items()
+            }
+        else:
+            # TODO: check this out
+            self.output_mask = instantiate(
+                config.model_dump(by_alias=True).model.output_mask,
+                graph_data=graph_data,
+            )
 
         self.model = AnemoiModelInterface(
             statistics=statistics,
             statistics_tendencies=statistics_tendencies,
             data_indices=data_indices,
             metadata=metadata,
-            supporting_arrays=supporting_arrays | self.output_mask.supporting_arrays,
+            supporting_arrays=supporting_arrays
+            | self.output_mask.supporting_arrays,  # <-- would lead to conflict
             graph_data=graph_data,
             truncation_data=truncation_data,
             config=convert_to_omegaconf(config),
@@ -191,48 +207,57 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         self.save_hyperparameters()
 
-        if dynamic_mode:
+        if self.dynamic_mode:
             self.latlons_data = {
-            label: graph_data[label][config.graph.data].x for label in graph_data.keys()
+                label: graph_data[label][config.graph.data].x
+                for label in graph_data.keys()
             }
         else:
             self.latlons_data = graph_data[config.graph.data].x
-        
+
         # TODO: check this out
         self.statistics_tendencies = statistics_tendencies
 
-        self.logger_enabled = config.diagnostics.log.wandb.enabled or config.diagnostics.log.mlflow.enabled
+        self.logger_enabled = (
+            config.diagnostics.log.wandb.enabled
+            or config.diagnostics.log.mlflow.enabled
+        )
 
         # TODO: check this out, maybe we need a dict of metadata_extractor
-        if dynamic_mode:
+        if self.dynamic_mode:
             metadata_extractor = {}
-            metadata_extractor = ExtractVariableGroupAndLevel(
-                variable_groups=config.model_dump(by_alias=True).training.variable_groups,
-                metadata_variables=metadata["dataset"].get("variables_metadata"),
-            )
+            for label, _metadata in metadata.items():
+                metadata_extractor[label] = ExtractVariableGroupAndLevel(
+                    variable_groups=config.model_dump(
+                        by_alias=True
+                    ).training.variable_groups,
+                    metadata_variables=_metadata.get("variables_metadata"),
+                )
         else:
             metadata_extractor = ExtractVariableGroupAndLevel(
-                variable_groups=config.model_dump(by_alias=True).training.variable_groups,
+                variable_groups=config.model_dump(
+                    by_alias=True
+                ).training.variable_groups,
                 metadata_variables=metadata["dataset"].get("variables_metadata"),
             )
 
         # Instantiate all scalers with the training configuration
-        if dynamic_mode:
+        if self.dynamic_mode:
             LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
             self.scalers = {}
             self.updating_scalars = {}
 
-            for label, G in graph_data.items():
-                self.scalers[label], self.updating_scalars[label] = self.scalers, self.updating_scalars = create_scalers(
+            for label in graph_data.keys():
+                self.scalers[label], self.updating_scalars[label] = create_scalers(
                     config.model_dump(by_alias=True).training.scalers,
                     data_indices=data_indices,
                     graph_data=graph_data[label],
-                    statistics=statistics,
-                    statistics_tendencies=statistics_tendencies,
-                    metadata_extractor=metadata_extractor,
-                    output_mask=self.output_mask,
+                    statistics=statistics[label],
+                    statistics_tendencies=statistics_tendencies[label],
+                    metadata_extractor=metadata_extractor[label],
+                    output_mask=self.output_mask[label],
                 )
-        
+
         else:
             LOGGER.info("Dynamic mode disabled, creating scalers for single domain")
             self.scalers, self.updating_scalars = create_scalers(
@@ -245,30 +270,70 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 output_mask=self.output_mask,
             )
 
-        self.val_metric_ranges = get_metric_ranges(
-            config,
-            data_indices,
-            metadata_extractor=metadata_extractor,
-        )
+        if self.dynamic_mode:
+            # TODO: not too happy about this... revisit later, try find a better way to do this.
+            self.val_metric_ranges = {}
+            self.loss = {}
+            self._scaling_values_log = {}
+            self.metrics = {}
+            for label in graph_data.keys():
+                self.val_metric_ranges[label] = get_metric_ranges(
+                    config,
+                    data_indices,
+                    metadata_extractor=metadata_extractor[label],
+                )
 
-        self.loss = get_loss_function(
-            config.model_dump(by_alias=True).training.training_loss,
-            scalers=self.scalers,
-            data_indices=self.data_indices,
-        )
-        self._scaling_values_log = print_variable_scaling(
-            self.loss,
-            data_indices,
-        )
+                self.loss[label] = get_loss_function(
+                    config.model_dump(by_alias=True).training.training_loss,
+                    scalers=self.scalers[label],
+                    data_indices=self.data_indices,
+                )
+                self._scaling_values_log[label] = print_variable_scaling(
+                    self.loss[label],
+                    data_indices,
+                )
 
-        self.metrics = torch.nn.ModuleDict(
-            {
-                metric_name: get_loss_function(val_metric_config, scalers=self.scalers, data_indices=self.data_indices)
-                for metric_name, val_metric_config in config.model_dump(
-                    by_alias=True,
-                ).training.validation_metrics.items()
-            },
-        )
+                self.metrics[label] = torch.nn.ModuleDict(
+                    {
+                        metric_name: get_loss_function(
+                            val_metric_config,
+                            scalers=self.scalers[label],
+                            data_indices=self.data_indices,
+                        )
+                        for metric_name, val_metric_config in config.model_dump(
+                            by_alias=True,
+                        ).training.validation_metrics.items()
+                    },
+                )
+        else:
+            self.val_metric_ranges = get_metric_ranges(
+                config,
+                data_indices,
+                metadata_extractor=metadata_extractor,
+            )
+
+            self.loss = get_loss_function(
+                config.model_dump(by_alias=True).training.training_loss,
+                scalers=self.scalers,
+                data_indices=self.data_indices,
+            )
+            self._scaling_values_log = print_variable_scaling(
+                self.loss,
+                data_indices,
+            )
+
+            self.metrics = torch.nn.ModuleDict(
+                {
+                    metric_name: get_loss_function(
+                        val_metric_config,
+                        scalers=self.scalers,
+                        data_indices=self.data_indices,
+                    )
+                    for metric_name, val_metric_config in config.model_dump(
+                        by_alias=True,
+                    ).training.validation_metrics.items()
+                },
+            )
 
         if config.training.loss_gradient_scaling:
             self.loss.register_full_backward_hook(grad_scaler, prepend=False)
@@ -290,16 +355,29 @@ class BaseGraphModule(pl.LightningModule, ABC):
         self.reader_groups = None
 
         reader_group_size = self.config.dataloader.read_group_size
-        self.grid_indices = instantiate(
-            self.config.model_dump(by_alias=True).dataloader.grid_indices,
-            reader_group_size=reader_group_size,
-        )
-        self.grid_indices.setup(graph_data)
+
+        if self.dynamic_mode:
+            self.grid_indices = {}
+            for label in graph_data.keys():
+                _grid_indices = instantiate(
+                    self.config.model_dump(by_alias=True).dataloader.grid_indices,
+                    reader_group_size=reader_group_size,
+                )
+                _grid_indices.setup(graph_data[label])
+                self.grid_indices[label] = _grid_indices
+        else:
+            self.grid_indices = instantiate(
+                self.config.model_dump(by_alias=True).dataloader.grid_indices,
+                reader_group_size=reader_group_size,
+            )
+            self.grid_indices.setup(graph_data)
         self.grid_dim = -2
 
         # check sharding support
         self.keep_batch_sharded = self.config.model.keep_batch_sharded
-        read_group_supports_sharding = reader_group_size == self.config.hardware.num_gpus_per_model
+        read_group_supports_sharding = (
+            reader_group_size == self.config.hardware.num_gpus_per_model
+        )
         assert read_group_supports_sharding or not self.keep_batch_sharded, (
             f"Reader group size {reader_group_size} does not match the number of GPUs per model "
             f"{self.config.hardware.num_gpus_per_model}, but `model.keep_batch_sharded=True` was set. ",
@@ -310,7 +388,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         # set flag if loss and metrics support sharding
         self.loss_supports_sharding = getattr(self.loss, "supports_sharding", False)
         self.metrics_support_sharding = all(
-            getattr(metric, "supports_sharding", False) for metric in self.metrics.values()
+            getattr(metric, "supports_sharding", False)
+            for metric in self.metrics.values()
         )
 
         if not self.loss_supports_sharding and self.keep_batch_sharded:
@@ -343,21 +422,25 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.dynamic_mode and isinstance(x, tuple):
-            assert len(x) == 2, f"Something went wrong, expecting tuple[torch.Tensor, str:graph_label]"
+            assert (
+                len(x) == 2
+            ), f"Something went wrong, expecting tuple[torch.Tensor, str:graph_label]"
             x_input, graph_label = x
         else:
-            x_input = x 
-            graph_label = None 
+            x_input = x
+            graph_label = None
 
         return self.model(
-            x,
+            x_input,
             graph_label,
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
         )
 
     def on_load_checkpoint(self, checkpoint: torch.nn.Module) -> None:
-        self._ckpt_model_name_to_index = checkpoint["hyper_parameters"]["data_indices"].name_to_index
+        self._ckpt_model_name_to_index = checkpoint["hyper_parameters"][
+            "data_indices"
+        ].name_to_index
 
     def update_scalers(self, callback: AvailableCallbacks) -> None:
         """Update scalers, calling the defined function on them, updating if not None."""
@@ -367,11 +450,15 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 continue
 
             if name in self.loss.scaler:  # If scalar in loss, update it
-                self.loss.update_scaler(scaler=scaler[1], name=name)  # Only update the values
+                self.loss.update_scaler(
+                    scaler=scaler[1], name=name
+                )  # Only update the values
 
             for metric in self.metrics.values():  # If scalar in metrics, update it
                 if name in metric.scaler:
-                    metric.update_scaler(scaler=scaler[1], name=name)  # Only update the values
+                    metric.update_scaler(
+                        scaler=scaler[1], name=name
+                    )  # Only update the values
 
     def set_model_comm_group(
         self,
@@ -427,10 +514,18 @@ class BaseGraphModule(pl.LightningModule, ABC):
             self.metrics_support_sharding or not validation_mode
         )
 
-        if is_sharded and not sharding_supported:  # gather tensors if loss or metrics do not support sharding
-            shard_shapes = apply_shard_shapes(y_pred, self.grid_dim, self.grid_shard_shapes)
-            y_pred_full = gather_tensor(torch.clone(y_pred), self.grid_dim, shard_shapes, self.model_comm_group)
-            y_full = gather_tensor(torch.clone(y), self.grid_dim, shard_shapes, self.model_comm_group)
+        if (
+            is_sharded and not sharding_supported
+        ):  # gather tensors if loss or metrics do not support sharding
+            shard_shapes = apply_shard_shapes(
+                y_pred, self.grid_dim, self.grid_shard_shapes
+            )
+            y_pred_full = gather_tensor(
+                torch.clone(y_pred), self.grid_dim, shard_shapes, self.model_comm_group
+            )
+            y_full = gather_tensor(
+                torch.clone(y), self.grid_dim, shard_shapes, self.model_comm_group
+            )
             grid_shard_slice = None
         else:
             y_pred_full, y_full = y_pred, y
@@ -537,12 +632,16 @@ class BaseGraphModule(pl.LightningModule, ABC):
             validation_mode,
         )
 
-        loss = self._compute_loss(y_pred=y_pred_full, y=y_full, grid_shard_slice=grid_shard_slice, **kwargs)
+        loss = self._compute_loss(
+            y_pred=y_pred_full, y=y_full, grid_shard_slice=grid_shard_slice, **kwargs
+        )
 
         # Compute metrics if in validation mode
         metrics_next = {}
         if validation_mode:
-            metrics_next = self._compute_metrics(y_pred_full, y_full, rollout_step, grid_shard_slice)
+            metrics_next = self._compute_metrics(
+                y_pred_full, y_full, rollout_step, grid_shard_slice
+            )
 
         return loss, metrics_next
 
@@ -561,7 +660,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after transfer
         """
-        batch, graph_label = batch 
+        batch, graph_label = batch
 
         # Gathering/sharding of batch
         batch = self._setup_batch_sharding(batch)
@@ -574,7 +673,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         return batch
 
-    def _setup_batch_sharding(self, batch: torch.Tensor) -> torch.Tensor:
+    def _setup_batch_sharding(
+        self, batch: torch.Tensor | tuple[torch.Tensor, str]
+    ) -> torch.Tensor:
         """Setup batch sharding before every step.
 
         If the batch is sharded, it will be setup with the grid shard shapes and slice.
@@ -590,15 +691,23 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after setup
         """
-        batch, graph_label = batch 
+        batch, graph_label = batch
 
         if self.keep_batch_sharded and self.model_comm_group_size > 1:
-            self.grid_shard_shapes = self.grid_indices.shard_shapes
-            self.grid_shard_slice = self.grid_indices.get_shard_slice(self.reader_group_rank)
+            if self.dynamic_mode and graph_label is not None:
+                self.grid_shard_shapes = self.grid_indices[graph_label].shard_shapes
+                self.grid_shard_slice = self.grid_indices[graph_label].get_shard_slice(
+                    self.reader_group_rank
+                )
+            else:
+                self.grid_shard_shapes = self.grid_indices.shard_shapes
+                self.grid_shard_slice = self.grid_indices.get_shard_slice(
+                    self.reader_group_rank
+                )
         else:
             batch = self.allgather_batch(batch)
             self.grid_shard_shapes, self.grid_shard_slice = None, None
-        return batch
+        return batch, graph_label
 
     def _normalize_batch(self, batch: torch.Tensor) -> torch.Tensor:
         """Normalize batch for training and validation before every step.
@@ -613,6 +722,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Normalized batch
         """
+        if self.dynamic_mode and isinstance(batch, tuple):
+            batch, graph_label = batch
         return self.model.pre_processors(batch)
 
     def _prepare_loss_scalers(self) -> None:
@@ -645,14 +756,22 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Allgathered (full) batch
         """
-        grid_shard_shapes = self.grid_indices.shard_shapes
-        grid_size = self.grid_indices.grid_size
+        if self.dynamic_mode and isinstance(batch, tuple):
+            batch, graph_label = batch
+            grid_shard_shapes = self.grid_indices[graph_label].shard_shapes
+            grid_size = self.grid_indices[graph_label].grid_size
+        else:
+            grid_shard_shapes = self.grid_indices.shard_shapes
+            grid_size = self.grid_indices.grid_size
 
         if grid_size == batch.shape[self.grid_dim] or self.reader_group_size == 1:
             return batch  # already have the full grid
 
         shard_shapes = apply_shard_shapes(batch, self.grid_dim, grid_shard_shapes)
-        tensor_list = [torch.empty(shard_shape, device=batch.device, dtype=batch.dtype) for shard_shape in shard_shapes]
+        tensor_list = [
+            torch.empty(shard_shape, device=batch.device, dtype=batch.dtype)
+            for shard_shape in shard_shapes
+        ]
 
         torch.distributed.all_gather(
             tensor_list,
@@ -692,7 +811,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
         for metric_name, metric in self.metrics.items():
             if not isinstance(metric, BaseLoss):
                 # If not a loss, we cannot feature scale, so call normally
-                metrics[f"{metric_name}_metric/{rollout_step + 1}"] = metric(y_pred_postprocessed, y_postprocessed)
+                metrics[f"{metric_name}_metric/{rollout_step + 1}"] = metric(
+                    y_pred_postprocessed, y_postprocessed
+                )
                 continue
 
             for mkey, indices in self.val_metric_ranges.items():
@@ -731,7 +852,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         return train_loss
 
-    def lr_scheduler_step(self, scheduler: CosineLRScheduler, metric: None = None) -> None:
+    def lr_scheduler_step(
+        self, scheduler: CosineLRScheduler, metric: None = None
+    ) -> None:
         """Step the learning rate scheduler by Pytorch Lightning.
 
         Parameters
@@ -760,7 +883,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         """
         del batch_idx
-        batch, graph_label = batch 
+        batch, graph_label = batch
         with torch.no_grad():
             val_loss, metrics, y_preds = self._step(batch, validation_mode=True)
 
@@ -826,7 +949,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
         # The conditions should be separate, but are combined due to pre-commit hook
         if stage == "fit" and self.trainer.is_global_zero and self.logger is not None:
             # Log hyperparameters on rank 0
-            hyper_params = OmegaConf.to_container(convert_to_omegaconf(self.config), resolve=True)
+            hyper_params = OmegaConf.to_container(
+                convert_to_omegaconf(self.config), resolve=True
+            )
             hyper_params.update({"variable_loss_scaling": self._scaling_values_log})
             # Expand keys for better visibility
             expand_keys = OmegaConf.select(
