@@ -1,3 +1,5 @@
+dynamic_mode: False # Whether to use dynamic graph mode (True) or static graph mode (False)
+
 num_channels: 1024
 output_mask:
   _target_: anemoi.training.utils.masks.NoOutputMask
