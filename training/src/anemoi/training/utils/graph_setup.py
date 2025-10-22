@@ -32,7 +32,7 @@ def single_graph_setup(config: DictConfig) -> HeteroData:
             return torch.load(
                 graph_filename,
                 map_location=get_distributed_device(),
-                weights_only=False,AC
+                weights_only=False,
             )
 
     else:
