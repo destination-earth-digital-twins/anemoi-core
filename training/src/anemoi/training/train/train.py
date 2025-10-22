@@ -59,18 +59,19 @@ class AnemoiTrainer:
         # This can increase performance (and TensorCore usage, where available).
         torch.set_float32_matmul_precision("high")
         # Resolve the config to avoid shenanigans with lazy loading
+        # for now... for debugging
+        # if config.config_validation:
+        #     OmegaConf.resolve(config)
+        #     self.config = BaseSchema(**config)
 
-        if config.config_validation:
-            OmegaConf.resolve(config)
-            self.config = BaseSchema(**config)
+        #     LOGGER.info("Config validated.")
+        # else:
+        #     config = OmegaConf.to_object(config)
+        #     self.config = UnvalidatedBaseSchema(**DictConfig(config))
 
-            LOGGER.info("Config validated.")
-        else:
-            config = OmegaConf.to_object(config)
-            self.config = UnvalidatedBaseSchema(**DictConfig(config))
-
-            LOGGER.info("Skipping config validation.")
-
+        #     LOGGER.info("Skipping config validation.")
+        OmegaConf.resolve(config)
+        self.config = config
         # Choose between single domain and multi-domain runs
         self.dynamic_mode = self.config.model.dynamic_mode
         assert isinstance(
