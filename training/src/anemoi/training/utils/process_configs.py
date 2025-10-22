@@ -43,7 +43,6 @@ class ProcessConfigs:
         returns:
             dict: The modified cutout structure with replacements made.
         """
-
         def recurse(obj):
             if isinstance(obj, dict):
                 # If this dict explicitly has dataset=None
