@@ -210,7 +210,7 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         num_heads: int,
         mlp_hidden_ratio: int,
         sub_graph_edge_attributes: list[str],
-        sub_graph: Optional[HeteroData] = None,,
+        sub_graph: Optional[HeteroData] = None,
         sub_graph_edge_index_name: str = None,
         edge_dim: Optional[int] = None,
         src_grid_size: Optional[int] = None,
@@ -449,7 +449,7 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
         edge_attr: Optional[torch.Tensor] = None,
-        edge_index: Optional[Adj]=None
+        edge_index: Optional[Adj]=None,
         model_comm_group: Optional[ProcessGroup] = None,
         x_src_is_sharded: bool = False,
         x_dst_is_sharded: bool = False,
