@@ -60,6 +60,17 @@ class AnemoiTrainer:
         torch.set_float32_matmul_precision("high")
         # Resolve the config to avoid shenanigans with lazy loading
 
+        if config.config_validation:
+            OmegaConf.resolve(config)
+            self.config = BaseSchema(**config)
+
+            LOGGER.info("Config validated.")
+        else:
+            config = OmegaConf.to_object(config)
+            self.config = UnvalidatedBaseSchema(**DictConfig(config))
+
+            LOGGER.info("Skipping config validation.")
+
         # Choose between single domain and multi-domain runs
         assert isinstance(config.model.dynamic_mode,bool), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
         if config.model.dynamic_mode:
