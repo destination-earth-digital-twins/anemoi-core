@@ -7,7 +7,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch_geometric.data import HeteroData
 
 from anemoi.graphs.create import GraphCreator
-from anemoi.graphs.nodes import ZarrDatasetNodes
+from anemoi.graphs.nodes import AnemoiDatasetNodes
 from anemoi.graphs.utils import get_distributed_device
 from anemoi.training.schemas.base_schema import convert_to_omegaconf
 
@@ -71,7 +71,7 @@ def multi_graph_setup(config: DictConfig) -> Dict[HeteroData]:
             )
         else:
             graph_config = convert_to_omegaconf(config).graph
-            graph = ZarrDatasetNodes(data, name=config.graph.data).update_graph(
+            graph = AnemoiDatasetNodes(data, name=config.graph.data).update_graph(
                 HeteroData(), attrs_config=graph_config.attributes.nodes
             )  # empty graph
 
