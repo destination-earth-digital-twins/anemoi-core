@@ -482,6 +482,11 @@ class AnemoiMultiDomain(nn.Module):
         truncation_data: Dict[dict], 
     ) -> None:
 
+        assert (
+            model_config.dynamic_mode
+        ), f"You have chosen multi-domain, but you have not enabled dynamic_mode to True. Abort.."
+
+        # TODO: add assert that only GT is supported for multi-domain (for now)
         # This is the model interface
         self.model = instantiate(
             model_config.model.model_type,
@@ -491,6 +496,11 @@ class AnemoiMultiDomain(nn.Module):
             graph_data=graph_data,
             truncation_data=truncation_data, 
         )
+
+        assert isinstance(
+            self.model, [EnsembleMultiDomain, DeterministicMultiDomain]
+        ), f"Dynamic_mode enabled, please instaniate [EnsembleMultiDomain, DeterministicMultiDomain]. Abort.. "
+
 
     
     def forward(
