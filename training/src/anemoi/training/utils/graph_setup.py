@@ -1,9 +1,9 @@
 import logging
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from torch_geometric.data import HeteroData
 
 from anemoi.graphs.create import GraphCreator
@@ -45,7 +45,7 @@ def single_graph_setup(config: DictConfig) -> HeteroData:
     )
 
 
-def multi_graph_setup(config: DictConfig) -> Dict[HeteroData]:
+def multi_graph_setup(config: DictConfig) -> HeteroData:
     """
     revisit. Try to explore this:
 
@@ -62,7 +62,7 @@ def multi_graph_setup(config: DictConfig) -> Dict[HeteroData]:
             label + ".pt",
         )
 
-        if graph_filename.exist() and not config.graph.overwrite:
+        if graph_filename.exists() and not config.graph.overwrite:
             LOGGER.info(f"Loading graph from {graph_filename}")
             graph = torch.load(
                 graph_filename,
