@@ -60,21 +60,17 @@ class AnemoiTrainer:
         torch.set_float32_matmul_precision("high")
         # Resolve the config to avoid shenanigans with lazy loading
 
-        if config.config_validation:
-            OmegaConf.resolve(config)
-            self.config = BaseSchema(**config)
-
-            LOGGER.info("Config validated.")
-        else:
-            config = OmegaConf.to_object(config)
-            self.config = UnvalidatedBaseSchema(**DictConfig(config))
-
-            LOGGER.info("Skipping config validation.")
+        dynamic_mode = config.model.get("dynamic_mode", False)
+        if dynamic_mode:
+            LOGGER.info("Dynamic mode enabled.")
+            config = self.get_processed_configs(config)
 
         # Choose between single domain and multi-domain runs
-        assert isinstance(config.model.dynamic_mode,bool), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
+        assert isinstance(
+            config.model.dynamic_mode, bool
+        ), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
         if config.model.dynamic_mode:
-            config = self.get_processed_configs(config) 
+            config = self.get_processed_configs(config)
 
         if config.config_validation:
             OmegaConf.resolve(config)
@@ -86,7 +82,7 @@ class AnemoiTrainer:
             self.config = UnvalidatedBaseSchema(**DictConfig(config))
 
             LOGGER.info("Skipping config validation.")
-        
+
         self.dynamic_mode = self.config.model.dynamic_mode
 
         self.start_from_checkpoint = (
@@ -113,41 +109,42 @@ class AnemoiTrainer:
 
         # Check for dry run, i.e. run id without data
         self._log_information()
-    
+
     def get_processed_configs(self, config) -> DictConfig:
         """
         Enable processing of multiple entries for different regions.
 
         Example:
             BaseStruct : {
-                cutout: 
+                cutout:
                 - dataset: null <- LAM region
                   area: null
                 - dataset: path/to/ERA5.zarr
-                adjust: all 
+                adjust: all
                 }
 
             regional_domains:
                 MEPS: path/to/MEPS.zarr
                 area: [0,0,1,1]
 
-            is converted to: 
+            is converted to:
 
             MEPS : {
-                cutout: 
+                cutout:
                 - dataset: path/to/MEPS:zarr
                   area: [0,0,11]
                 - dataset: path/to/ERA5.zarr
-                adjust: all 
+                adjust: all
                 }
         args:
             None
         return:
-            OmegaConf.DictConfig with added regional data 
+            OmegaConf.DictConfig with added regional data
             and corresponding information
 
         """
         from anemoi.training.utils.process_configs import ProcessConfigs
+
         pc = ProcessConfigs(base_config=config)
         pc.process
         return pc.update()
@@ -161,7 +158,9 @@ class AnemoiTrainer:
             self.graph_data,
         )
         self.config.data.num_features = len(datamodule.ds_train.data.variables)
-        LOGGER.info("Number of data variables: %s", str(len(datamodule.ds_train.data.variables)))
+        LOGGER.info(
+            "Number of data variables: %s", str(len(datamodule.ds_train.data.variables))
+        )
         LOGGER.info("Variables: %s", str(datamodule.ds_train.data.variables))
         return datamodule
 
@@ -200,6 +199,7 @@ class AnemoiTrainer:
         Creates the graph in all workers.
         """
         from anemoi.training.utils.graph_setup import graph_setup
+
         return graph_setup(self.config, self.dynamic_mode)
 
     @cached_property
@@ -212,31 +212,40 @@ class AnemoiTrainer:
             truncation_data = {}
             if self.config.hardware.files.truncation is not None:
                 truncation_data["down"] = load_npz(
-                    Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation),
+                    Path(
+                        self.config.hardware.paths.truncation,
+                        self.config.hardware.files.truncation,
+                    ),
                 )
             if self.config.hardware.files.truncation_inv is not None:
                 truncation_data["up"] = load_npz(
-                    Path(self.config.hardware.paths.truncation, self.config.hardware.files.truncation_inv),
+                    Path(
+                        self.config.hardware.paths.truncation,
+                        self.config.hardware.files.truncation_inv,
+                    ),
                 )
 
             return truncation_data
         else:
-            return 
+            return
 
     @cached_property
     def model(self) -> pl.LightningModule:
         """Provide the model instance."""
         assert (
             not (
-                "GLU" in self.config.model.processor.layer_kernels["Activation"]["_target_"]
+                "GLU"
+                in self.config.model.processor.layer_kernels["Activation"]["_target_"]
                 and ".Transformer" in self.config.model.processor.target_
             )
             and not (
-                "GLU" in self.config.model.encoder.layer_kernels["Activation"]["_target_"]
+                "GLU"
+                in self.config.model.encoder.layer_kernels["Activation"]["_target_"]
                 and ".Transformer" in self.config.model.encoder.target_
             )
             and not (
-                "GLU" in self.config.model.decoder.layer_kernels["Activation"]["_target_"]
+                "GLU"
+                in self.config.model.decoder.layer_kernels["Activation"]["_target_"]
                 and ".Transformer" in self.config.model.decoder.target_
             )
         ), "GLU activation function is not supported in Transformer models, due to fixed dimensions. "
@@ -260,22 +269,34 @@ class AnemoiTrainer:
         if self.load_weights_only:
             # Sanify the checkpoint for transfer learning
             if self.config.training.transfer_learning:
-                LOGGER.info("Loading weights with Transfer Learning from %s", self.last_checkpoint)
+                LOGGER.info(
+                    "Loading weights with Transfer Learning from %s",
+                    self.last_checkpoint,
+                )
                 model = transfer_learning_loading(model, self.last_checkpoint)
             else:
-                LOGGER.info("Restoring only model weights from %s", self.last_checkpoint)
+                LOGGER.info(
+                    "Restoring only model weights from %s", self.last_checkpoint
+                )
                 # pop data_indices so that the data indices on the checkpoint do not get overwritten
                 # by the data indices from the new config
                 kwargs.pop("data_indices")
-                model = model_task.load_from_checkpoint(self.last_checkpoint, **kwargs, strict=False)
+                model = model_task.load_from_checkpoint(
+                    self.last_checkpoint, **kwargs, strict=False
+                )
 
             model.data_indices = self.data_indices
             # check data indices in original checkpoint and current data indices are the same
-            self.data_indices.compare_variables(model._ckpt_model_name_to_index, self.data_indices.name_to_index)
+            self.data_indices.compare_variables(
+                model._ckpt_model_name_to_index, self.data_indices.name_to_index
+            )
 
         if hasattr(self.config.training, "submodules_to_freeze"):
             # Freeze the chosen model weights
-            LOGGER.info("The following submodules will NOT be trained: %s", self.config.training.submodules_to_freeze)
+            LOGGER.info(
+                "The following submodules will NOT be trained: %s",
+                self.config.training.submodules_to_freeze,
+            )
             for submodule_name in self.config.training.submodules_to_freeze:
                 freeze_submodule_by_name(model, submodule_name)
                 LOGGER.info("%s frozen successfully.", submodule_name.upper())
@@ -328,7 +349,9 @@ class AnemoiTrainer:
 
     def _get_warm_start_checkpoint(self) -> Path | None:
         """Returns the warm start checkpoint path if specified."""
-        warm_start_dir = getattr(self.config.hardware.paths, "warm_start", None)  # avoid breaking change
+        warm_start_dir = getattr(
+            self.config.hardware.paths, "warm_start", None
+        )  # avoid breaking change
         warm_start_file = self.config.hardware.files.warm_start
         warm_start_path = None
 
@@ -346,7 +369,13 @@ class AnemoiTrainer:
 
     def _get_checkpoint_directory(self, fork_id: str) -> Path:
         """Returns the directory where checkpoints are stored."""
-        return Path(self.config.hardware.paths.checkpoints.parent, fork_id or self.lineage_run) / "last.ckpt"
+        return (
+            Path(
+                self.config.hardware.paths.checkpoints.parent,
+                fork_id or self.lineage_run,
+            )
+            / "last.ckpt"
+        )
 
     @cached_property
     def last_checkpoint(self) -> Path | None:
@@ -355,7 +384,9 @@ class AnemoiTrainer:
             return None
 
         fork_id = self.fork_run_server2server or self.config.training.fork_run_id
-        checkpoint = self._get_warm_start_checkpoint() or self._get_checkpoint_directory(fork_id)
+        checkpoint = (
+            self._get_warm_start_checkpoint() or self._get_checkpoint_directory(fork_id)
+        )
 
         # Check if the last checkpoint exists
         if checkpoint.exists():
@@ -443,14 +474,20 @@ class AnemoiTrainer:
         }, f"Invalid accelerator ({self.config.hardware.accelerator}) in hardware config."
 
         if self.config.hardware.accelerator == "cpu":
-            LOGGER.info("WARNING: Accelerator set to CPU, this should only be used for debugging.")
+            LOGGER.info(
+                "WARNING: Accelerator set to CPU, this should only be used for debugging."
+            )
         return self.config.hardware.accelerator
 
     def _log_information(self) -> None:
         # Log number of variables (features)
-        num_fc_features = len(self.datamodule.ds_train.data.variables) - len(self.config.data.forcing)
+        num_fc_features = len(self.datamodule.ds_train.data.variables) - len(
+            self.config.data.forcing
+        )
         LOGGER.info("Total number of prognostic variables: %d", num_fc_features)
-        LOGGER.info("Total number of auxiliary variables: %d", len(self.config.data.forcing))
+        LOGGER.info(
+            "Total number of auxiliary variables: %d", len(self.config.data.forcing)
+        )
 
         # Log learning rate multiplier when running single-node, multi-GPU and/or multi-node
         total_number_of_model_instances = (
@@ -468,7 +505,10 @@ class AnemoiTrainer:
             int(total_number_of_model_instances) * self.config.training.lr.rate,
         )
 
-        if self.config.training.max_epochs is not None and self.config.training.max_steps not in (None, -1):
+        if (
+            self.config.training.max_epochs is not None
+            and self.config.training.max_steps not in (None, -1)
+        ):
             LOGGER.info(
                 "Training limits: max_epochs=%d, max_steps=%d. "
                 "Training will stop when either limit is reached first. "
@@ -491,17 +531,27 @@ class AnemoiTrainer:
     def _update_paths(self) -> None:
         """Update the paths in the configuration."""
         self.lineage_run = None
-        if self.run_id:  # when using mlflow only rank0 will have a run_id except when resuming runs
+        if (
+            self.run_id
+        ):  # when using mlflow only rank0 will have a run_id except when resuming runs
             # Multi-gpu new runs or forked runs - only rank 0
             # Multi-gpu resumed runs - all ranks
             self.lineage_run = self.parent_run_server2server or self.run_id
-            self.config.hardware.paths.checkpoints = Path(self.config.hardware.paths.checkpoints, self.lineage_run)
-            self.config.hardware.paths.plots = Path(self.config.hardware.paths.plots, self.lineage_run)
+            self.config.hardware.paths.checkpoints = Path(
+                self.config.hardware.paths.checkpoints, self.lineage_run
+            )
+            self.config.hardware.paths.plots = Path(
+                self.config.hardware.paths.plots, self.lineage_run
+            )
         elif self.config.training.fork_run_id:
             # WHEN USING MANY NODES/GPUS
-            self.lineage_run = self.parent_run_server2server or self.config.training.fork_run_id
+            self.lineage_run = (
+                self.parent_run_server2server or self.config.training.fork_run_id
+            )
             # Only rank non zero in the forked run will go here
-            self.config.hardware.paths.checkpoints = Path(self.config.hardware.paths.checkpoints, self.lineage_run)
+            self.config.hardware.paths.checkpoints = Path(
+                self.config.hardware.paths.checkpoints, self.lineage_run
+            )
 
         LOGGER.info("Checkpoints path: %s", self.config.hardware.paths.checkpoints)
         LOGGER.info("Plots path: %s", self.config.hardware.paths.plots)
@@ -517,10 +567,13 @@ class AnemoiTrainer:
         if self.config.diagnostics.log.mlflow.enabled:
             # Check if the run ID is dry - e.g. without a checkpoint
             self.dry_run = (
-                self.mlflow_logger._parent_dry_run and not Path(self.config.hardware.paths.checkpoints).is_dir()
+                self.mlflow_logger._parent_dry_run
+                and not Path(self.config.hardware.paths.checkpoints).is_dir()
             )
             self.start_from_checkpoint = (
-                False if (self.dry_run and not bool(self.config.training.fork_run_id)) else self.start_from_checkpoint
+                False
+                if (self.dry_run and not bool(self.config.training.fork_run_id))
+                else self.start_from_checkpoint
             )
             LOGGER.info("Dry run: %s", self.dry_run)
 
@@ -559,7 +612,9 @@ class AnemoiTrainer:
             use_distributed_sampler=False,
             profiler=self.profiler,
             enable_progress_bar=self.config.diagnostics.enable_progress_bar,
-            check_val_every_n_epoch=getattr(self.config.diagnostics, "check_val_every_n_epoch", 1),
+            check_val_every_n_epoch=getattr(
+                self.config.diagnostics, "check_val_every_n_epoch", 1
+            ),
         )
 
         LOGGER.debug("Starting training..")
