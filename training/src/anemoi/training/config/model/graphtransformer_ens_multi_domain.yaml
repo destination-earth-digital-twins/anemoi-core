@@ -1,5 +1,5 @@
 defaults:
-  - model: graphtransformer_ens
+  - graphtransformer_ens
 
 dynamic_mode: True # Enables multi-domain
 
