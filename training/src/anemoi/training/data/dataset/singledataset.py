@@ -16,6 +16,7 @@ from functools import cached_property
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from einops import rearrange
 from torch.utils.data import IterableDataset
 
@@ -31,21 +32,24 @@ class NativeGridDataset(IterableDataset):
 
     def __init__(
         self,
-        data_reader: Callable,
-        grid_indices: type[BaseGridIndices],
+        data_reader: Callable | dict[Callable],
+        grid_indices: type[BaseGridIndices] | dict[type[BaseGridIndices]],
         relative_date_indices: list,
         timestep: str = "6h",
         shuffle: bool = True,
         label: str = "generic",
+        dynamic_mode: bool = False,
     ) -> None:
         """Initialize (part of) the dataset state.
 
         Parameters
         ----------
-        data_reader : Callable
-            user function that opens and returns the anemoi-datasets array data
+        data_reader : Callable | dict[Callable]
+            user function that opens and returns the anemoi-datasets array data. 
+            If dynamic_mode is True, this should be a dict of callables for each domain.
         grid_indices : Type[BaseGridIndices]
             indices of the grid to keep. Defaults to None, which keeps all spatial indices.
+            If dynamic_mode is True, this should be a dict of BaseGridIndices for each domain.
         relative_date_indices: list
             list of time indices to load from the data relative to the current sample i in __iter__
         timestep : int, optional
@@ -53,7 +57,9 @@ class NativeGridDataset(IterableDataset):
         shuffle : bool, optional
             Shuffle batches, by default True
         label : str, optional
-            label for the dataset, by default "generic"
+            label for the dataset, by default "generic". Notice! not the same as domain and graph label.
+        dynamic_mode : bool, optional
+            whether to use dynamic mode to enable multi-domain NativeGridDataset functionality, by default False
         """
         self.label = label
 
@@ -90,46 +96,92 @@ class NativeGridDataset(IterableDataset):
         # relative index of dates to extract
         self.relative_date_indices = relative_date_indices
 
+        if self.dynamic_mode:
+            self.num_domain = len(self.data)
+            self.all_labels = list(self.data.keys())
+
+
     @cached_property
-    def statistics(self) -> dict:
+    def statistics(self) -> dict[dict] | dict:
         """Return dataset statistics."""
+        if self.dynamic_mode:
+                _statistics = {
+                    label : domain.statistics for label, domain in self.data.items()
+                }
+                return _statistics
         return self.data.statistics
 
     @cached_property
-    def statistics_tendencies(self) -> dict:
+    def statistics_tendencies(self) -> dict[dict] | dict:
         """Return dataset tendency statistics."""
         try:
+            if self.dynamic_mode:
+                return {
+                    label : domain.statistics_tendencies(self.timestep) for label, domain in self.data.items()
+                }
             return self.data.statistics_tendencies(self.timestep)
         except (KeyError, AttributeError):
             return None
 
     @cached_property
-    def metadata(self) -> dict:
+    def metadata(self) -> dict[dict] | dict:
         """Return dataset metadata."""
+        if self.dynamic_mode:
+            return {
+                label : domain.metadata for label, domain in self.data.items()
+            }
         return self.data.metadata()
 
     @cached_property
-    def supporting_arrays(self) -> dict:
+    def supporting_arrays(self) -> dict[dict] | dict:
         """Return dataset supporting_arrays."""
+        if self.dynamic_mode:
+            return {
+                label : domain.supporting_arrays() for label, domain in self.data.items()
+            }
         return self.data.supporting_arrays()
 
     @cached_property
     def name_to_index(self) -> dict:
         """Return dataset statistics."""
+        if self.dynamic_mode:
+            _all_indices = {
+                label : domain.name_to_index for label, domain in self.data.items()
+                } 
+
+            assert all(
+                d == next(iter(_all_indices.values())) for d in _all_indices.values()
+            ), "Index dicts do not match!"  
+            LOGGER.debug("All data indices matches!")
+            return next(iter(_all_indices.values()))
         return self.data.name_to_index
 
     @cached_property
-    def resolution(self) -> dict:
+    def resolution(self) -> dict[dict] | dict:
         """Return dataset resolution."""
+        if self.dynamic_mode:
+            return {
+                label : domain.resolution for label, domain in self.data.items()
+            }
         return self.data.resolution
 
     @cached_property
-    def valid_date_indices(self) -> np.ndarray:
+    def valid_date_indices(self) -> np.ndarray | dict[np.ndarray]:
         """Return valid date indices.
 
         A date t is valid if we can sample the elements t + i
         for every relative_date_index i.
         """
+        if self.dynamic_mode:
+            return {
+                label: get_usable_indices(
+                    domain.missing,
+                    len(domain),
+                    np.array(self.relative_date_indices, dtype=np.int64),
+                    domain.trajectory_ids,
+                )
+                for label, domain in self.data.items()
+            }
         return get_usable_indices(
             self.data.missing,
             len(self.data),
@@ -185,7 +237,7 @@ class NativeGridDataset(IterableDataset):
             reader_group_rank,
         )
 
-    def per_worker_init(self, n_workers: int, worker_id: int) -> None:
+    def single_per_worker_init(self, n_workers: int, worker_id: int) -> None:
         """Called by worker_init_func on each copy of dataset.
 
         This initialises after the worker process has been spawned.
@@ -245,8 +297,100 @@ class NativeGridDataset(IterableDataset):
             sanity_rnd,
         )
 
-    def __iter__(self) -> torch.Tensor:
-        """Return an iterator over the dataset.
+    def multi_domain_per_worker_init(self, n_workers: int, worker_id: int) -> None:
+        """Called by worker_init_func on each copy of dataset.
+
+        This initialises after the worker process has been spawned.
+
+        Parameters
+        ----------
+        n_workers : int
+            Number of workers
+        worker_id : int
+            Worker ID
+
+        """
+        self.worker_id = worker_id
+
+        # Divide this equally across shards (one shard per group!)
+        # _valid_date_indices = [
+        #     (label, idx)
+        #     for label, domain_indexes in self.valid_date_indices.items()
+        #     for idx in domain_indexes
+        # ]
+        self.chunk_index_range = {}
+        for domain, indices in self.valid_date_indices.items():
+            LOGGER.debug(
+                "Domain %s has %d valid date indices.",
+                domain,
+                len(indices),
+            )
+            shard_size = len(indices) // self.sample_comm_num_groups
+            shard_start = self.sample_comm_group_id * shard_size
+            shard_end = (self.sample_comm_group_id + 1) * shard_size
+
+            shard_len = shard_end - shard_start
+            self.n_samples_per_worker = shard_len // n_workers
+
+            low = shard_start + worker_id * self.n_samples_per_worker
+            high = min(shard_start + (worker_id + 1) * self.n_samples_per_worker, shard_end)
+            
+            self.chunk_index_range[domain] = np.arange(low, high, dtype=np.uint32)
+
+            LOGGER.info(
+                "Worker %d (pid %d, global_rank %d, model comm group %d)  has low/high range %d / %d",
+                worker_id,
+                os.getpid(),
+                self.global_rank,
+                self.model_comm_group_id,
+                low,
+                high,
+            )
+
+        base_seed = get_base_seed()
+
+        torch.manual_seed(base_seed)
+        random.seed(base_seed)
+        self.rng = np.random.default_rng(seed=base_seed)
+        sanity_rnd = self.rng.random(1)
+
+        LOGGER.info(
+            (
+                "Worker %d (%s, pid %d, glob. rank %d, model comm group %d, "
+                "group_rank %d, seed group id %d, base_seed %d, sanity rnd %f)"
+            ),
+            worker_id,
+            self.label,
+            os.getpid(),
+            self.global_rank,
+            self.model_comm_group_id,
+            self.model_comm_group_rank,
+            self.sample_comm_group_id,
+            base_seed,
+            sanity_rnd,
+        )
+    def per_worker_init(self, n_workers: int, worker_id: int) -> None:
+        """Called by worker_init_func on each copy of dataset.
+
+        This initialises after the worker process has been spawned.
+
+        Parameters
+        ----------
+        n_workers : int
+            Number of workers
+        worker_id : int
+            Worker ID
+
+        """
+        if self.dynamic_mode:
+            self.multi_domain_per_worker_init(n_workers, worker_id)
+        else:
+            self.single_per_worker_init(n_workers, worker_id)
+
+    
+    def __sd_iter__(self) -> torch.Tensor:
+        """
+        Return an iterator over the single domain dataset.
 
         The datasets are retrieved by anemoi.datasets from anemoi datasets. This iterator yields
         chunked batches for DDP and sharded training.
@@ -301,7 +445,104 @@ class NativeGridDataset(IterableDataset):
 
             yield torch.from_numpy(x)
 
+    def __md_iter__(self) -> tuple[torch.Tensor, str]:
+        """
+        Return an iterator over the single domain dataset.
+
+        The datasets are retrieved by anemoi.datasets from anemoi datasets. This iterator yields
+        chunked batches for DDP and sharded training.
+
+        Currently it receives data with an ensemble dimension, which is discarded for
+        now. (Until the code is "ensemble native".)
+        """
+
+        if self.shuffle:
+            shuffled_chunk_indices = {
+                domain : self.rng.choice(
+                    indices,
+                    size=len(indices),
+                    replace=False,
+                )[self.chunk_index_range[domain]] 
+                for domain, indices in self.valid_date_indices.items()
+            }
+        
+            labeled_sampels_and_indexes = [
+                (domain, i) 
+                for domain, inds in shuffled_chunk_indices.items() 
+                for i in inds
+            ]
+            # reshuffle the labeled (with their indexes) samples across domains
+            labeled_samples = self.rng.choice(
+                labeled_sampels_and_indexes,
+                size=len(labeled_sampels_and_indexes),
+                replace=False,
+            )
+
+        else:
+            shuffled_chunk_indices = {
+                domain : indices[self.chunk_index_range[domain]] 
+                for domain, indices in self.valid_date_indices.items()
+            }
+            labeled_sampels = [
+                (domain, i) 
+                for domain, inds in shuffled_chunk_indices.items() 
+                for i in inds
+            ]
+
+        LOGGER.debug(
+            (
+                "Worker pid %d, label %s, worker id %d, global_rank %d, "
+                "model comm group %d, group_rank %d, seed comm group id %d, using indices[0:10]: %s"
+            ),
+            os.getpid(),
+            self.label,
+            self.worker_id,
+            self.global_rank,
+            self.model_comm_group_id,
+            self.model_comm_group_rank,
+            self.sample_comm_group_id,
+            labeled_sampels[:10],
+        )
+        for batch in labeled_samples:
+            domain, i = batch 
+            start = i + self.relative_date_indices[0]
+            end = i + self.relative_date_indices[-1] + 1
+            timeincrement = self.relative_date_indices[1] - self.relative_date_indices[0]
+
+            current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
+            if isinstance(current_domain_grid_shard_indices, slice):
+                # Load only shards into CPU memory
+                x = self.data[domain][start:end:timeincrement, :, :, grid_shard_indices]
+
+            else:
+                # Load full grid in CPU memory, select grid_shard after
+                # Note that anemoi-datasets currently doesn't support slicing + indexing
+                # in the same operation.
+                x = self.data[domain][start:end:timeincrement, :, :, :]
+                x = x[..., grid_shard_indices]  # select the grid shard
+            x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
+            self.ensemble_dim = 1
+
+            yield torch.from_numpy(x), domain
+
+    def __iter__(self) -> torch.Tensor | tuple[torch.Tensor, str]:
+        """
+        Return an iterator over the dataset. 
+        Handles both single and multi-domain modes.
+        """
+        if self.dynamic_mode:
+            yield from self.__md_iter__()
+        else:
+            yield from self.__sd_iter__()
+
     def __repr__(self) -> str:
+        if self.dynamic_mode:
+            return f"""
+                {super().__repr__()}
+                Dataset: {self.data}
+                Relative dates: {self.relative_date_indices}
+                Dynamic mode enabled with domains: {self.all_labels}
+            """
         return f"""
             {super().__repr__()}
             Dataset: {self.data}
