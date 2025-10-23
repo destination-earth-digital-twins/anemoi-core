@@ -103,7 +103,8 @@ class GraphForecaster(BaseGraphModule):
         x: torch.Tensor,
         y_pred: torch.Tensor,
         batch: torch.Tensor,
-        rollout_step: int,
+        rollout_step: int, 
+        label: str | None = None,
     ) -> torch.Tensor:
         x = x.roll(-1, dims=1)
 
@@ -113,12 +114,20 @@ class GraphForecaster(BaseGraphModule):
             self.data_indices.model.output.prognostic,
         ]
 
-        x[:, -1] = self.output_mask.rollout_boundary(
-            x[:, -1],
-            batch[:, self.multi_step + rollout_step],
-            self.data_indices,
-            grid_shard_slice=self.grid_shard_slice,
-        )
+        if self.dynamic_mode and label is not None:
+            x[:, -1] = self.output_mask[label].rollout_boundary(
+                x[:, -1],
+                batch[:, self.multi_step + rollout_step],
+                self.data_indices,
+                grid_shard_slice=self.grid_shard_slice,
+            )
+        else:
+            x[:, -1] = self.output_mask.rollout_boundary(
+                x[:, -1],
+                batch[:, self.multi_step + rollout_step],
+                self.data_indices,
+                grid_shard_slice=self.grid_shard_slice,
+            )
 
         # get new "constants" needed for time-varying fields
         x[:, -1, :, :, self.data_indices.model.input.forcing] = batch[
@@ -156,6 +165,10 @@ class GraphForecaster(BaseGraphModule):
 
         """
         # start rollout of preprocessed batch
+        label = None
+        if self.dynamic_mode:
+            x, label = batch
+
         x = batch[
             :,
             0 : self.multi_step,
@@ -170,7 +183,7 @@ class GraphForecaster(BaseGraphModule):
 
         for rollout_step in range(rollout or self.rollout):
             # prediction at rollout step rollout_step, shape = (bs, latlon, nvar)
-            y_pred = self(x)
+            y_pred = self(x, label)
 
             y = batch[:, self.multi_step + rollout_step, ..., self.data_indices.data.output.full]
             # y includes the auxiliary variables, so we must leave those out when computing the loss
@@ -181,19 +194,27 @@ class GraphForecaster(BaseGraphModule):
                 rollout_step,
                 validation_mode,
                 use_reentrant=False,
+                label=label
             )
 
-            x = self.advance_input(x, y_pred, batch, rollout_step)
+            # No labels needed for advancing the input/step
+            x = self.advance_input(x, y_pred, batch, rollout_step, label)
 
             yield loss, metrics_next, y_pred
 
     def _step(
         self,
-        batch: torch.Tensor,
+        batch: tuple[torch.Tensor,str],
         validation_mode: bool = False,
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor]]:
 
-        loss = torch.zeros(1, dtype=batch.dtype, device=self.device, requires_grad=False)
+        loss = torch.zeros(
+            1, 
+            dtype=batch[0].dtype if instance(batch, tuple) else batch.dtype, 
+            device=self.device, 
+            requires_grad=False
+        )
+
         metrics = {}
         y_preds = []
 
