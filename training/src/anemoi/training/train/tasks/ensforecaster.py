@@ -111,9 +111,10 @@ class GraphEnsForecaster(BaseGraphModule):
 
         self.ensemble_ic_generator = EnsembleInitialConditions(config=config, data_indices=data_indices)
 
-    def forward(self, x: torch.Tensor, fcstep: int) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, fcstep: int, graph_label: str = None) -> torch.Tensor:
         return self.model(
             x,
+            graph_label=graph_label,
             fcstep=fcstep,
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
@@ -204,20 +205,27 @@ class GraphEnsForecaster(BaseGraphModule):
         y_pred: torch.Tensor,
         batch: torch.Tensor,
         rollout_step: int,
+        label: str = None,
     ) -> torch.Tensor:
         x = x.roll(-1, dims=1)
-
+        
         # Get prognostic variables
         x[:, -1, :, :, self.data_indices.model.input.prognostic] = y_pred[
             ...,
             self.data_indices.model.output.prognostic,
         ]
-
-        x[:, -1] = self.output_mask.rollout_boundary(
-            x[:, -1],
-            batch[:, self.multi_step + rollout_step],
-            self.data_indices,
-        )
+        if self.dynamic_mode and label is not None:
+            x[:, -1] = self.output_mask.rollout_boundary(
+                x[:, -1],
+                batch[:, self.multi_step + rollout_step],
+                self.data_indices,
+            )
+        else:
+            x[:, -1] = self.output_mask.rollout_boundary(
+                x[:, -1],
+                batch[:, self.multi_step + rollout_step],
+                self.data_indices,
+            )
 
         # get new "constants" needed for time-varying fields
         x[:, -1, :, :, self.data_indices.model.input.forcing] = batch[
@@ -259,6 +267,7 @@ class GraphEnsForecaster(BaseGraphModule):
         batch: torch.Tensor,
         rollout: int | None = None,
         validation_mode: bool = False,
+        label: str = None,
     ) -> Generator[tuple[torch.Tensor | None, dict, list]]:
         """Rollout step for the forecaster.
 
@@ -304,7 +313,7 @@ class GraphEnsForecaster(BaseGraphModule):
 
         for rollout_step in range(rollout or self.rollout):
             # prediction at rollout step rollout_step, shape = (bs, latlon, nvar)
-            y_pred = self(x, rollout_step)
+            y_pred = self(x, rollout_step, label)
             y = batch[0][
                 :,
                 self.multi_step + rollout_step,
@@ -315,11 +324,12 @@ class GraphEnsForecaster(BaseGraphModule):
             LOGGER.debug("SHAPE: y.shape = %s", list(y.shape))
 
             # y includes the auxiliary variables, so we must leave those out when computing the loss
+            # TODO: Investigate this!
             loss, y_pred_ens_group = checkpoint(
                 self.gather_and_compute_loss,
                 y_pred,
                 y,
-                self.loss,
+                self.loss[label] if self.dynamic_mode else self.loss,
                 self.ens_comm_subgroup_size,
                 self.ens_comm_subgroup,
                 self.model_comm_group,
@@ -327,7 +337,7 @@ class GraphEnsForecaster(BaseGraphModule):
                 use_reentrant=False,
             )
 
-            x = self.advance_input(x, y_pred, batch[0], rollout_step)
+            x = self.advance_input(x, y_pred, batch[0], rollout_step, label)
 
             metrics_next = {}
             if validation_mode:
@@ -336,6 +346,7 @@ class GraphEnsForecaster(BaseGraphModule):
                     y,
                     rollout_step,
                     grid_shard_slice=self.grid_shard_slice,
+                    label=label
                 )
             yield loss, metrics_next, y_pred_ens_group if validation_mode else [], x if validation_mode else None
 
@@ -367,10 +378,10 @@ class GraphEnsForecaster(BaseGraphModule):
         loss *= 1.0 / self.rollout
         return loss, metrics, y_preds, _ens_ic
 
-    def allgather_batch(self, batch: torch.Tensor) -> torch.Tensor:
-        batch[0] = super().allgather_batch(batch[0])
+    def allgather_batch(self, batch: torch.Tensor, label: str = None) -> torch.Tensor:
+        batch[0] = super().allgather_batch(batch[0], label=label)
         if len(batch) == 2:
-            batch[1] = super().allgather_batch(batch[1])
+            batch[1] = super().allgather_batch(batch[1], label=label)
         return batch
 
     def training_step(self, batch: tuple[torch.Tensor, ...], batch_idx: int) -> torch.Tensor | dict:
@@ -391,10 +402,14 @@ class GraphEnsForecaster(BaseGraphModule):
         """
         del batch_idx
 
-        train_loss, _, _, _ = self._step(batch)
+        label=None 
+        if self.dynamic_mode and isinstance(batch, tuple) and len(batch) =! 0:
+            batch, label = batch
+
+        train_loss, _, _, _ = self._step(batch, label=label)
 
         self.log(
-            "train_" + self.loss.name,
+            "train_" + self.loss[label].name if self.dynamic_mode else self.loss.name,
             train_loss,
             on_epoch=True,
             on_step=True,
@@ -438,11 +453,15 @@ class GraphEnsForecaster(BaseGraphModule):
             Tuple containing the validation loss, the predictions, and the ensemble initial conditions
         """
         del batch_idx
+        label = None
+        if self.dynamic_mode and isinstance(batch, tuple) and len(batch) != 0:
+            batch, label = batch
 
         with torch.no_grad():
-            val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True)
+            val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True, label=label)
+        
         self.log(
-            "val_" + self.loss.name,
+            "val_" + self.loss[label].name if self.dynamic_mode else self.loss.name,
             val_loss,
             on_epoch=True,
             on_step=True,
