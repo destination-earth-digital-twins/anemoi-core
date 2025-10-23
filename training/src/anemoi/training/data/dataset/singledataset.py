@@ -16,7 +16,6 @@ from functools import cached_property
 
 import numpy as np
 import torch
-import torch.distributed as dist
 from einops import rearrange
 from torch.utils.data import IterableDataset
 
