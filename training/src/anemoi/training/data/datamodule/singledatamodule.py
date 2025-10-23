@@ -271,13 +271,14 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     ) -> NativeGridDataset:
         if isinstance(data_reader, dict) and self.dynamic_mode:
             data_reader = {
-                label : open_dataset(data_set_config) for label, dataset_config in data_reader.items()
+                domain : open_dataset(data_set_config) for domain, dataset_config in data_reader.items()
                 }
             data_reader = {
-                label : self.add_trajectory_ids(reader) for label, reader in data_reader.items()
+                domain : self.add_trajectory_ids(reader) for domain, reader in data_reader.items()
             }
         else:
-            data_reader = self.add_trajectory_ids(data_reader)  # NOTE: Functionality to be moved to anemoi datasets
+            # NOTE: Functionality to be moved to anemoi datasets
+            data_reader = self.add_trajectory_ids(data_reader)  
 
         return NativeGridDataset(
             data_reader=data_reader,
