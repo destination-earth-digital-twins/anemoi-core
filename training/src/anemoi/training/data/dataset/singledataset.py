@@ -387,7 +387,7 @@ class NativeGridDataset(IterableDataset):
             self.single_per_worker_init(n_workers, worker_id)
 
     
-    def __sd_iter__(self) -> torch.Tensor:
+    def __single_domain_iter__(self) -> torch.Tensor:
         """
         Return an iterator over the single domain dataset.
 
@@ -444,7 +444,7 @@ class NativeGridDataset(IterableDataset):
 
             yield torch.from_numpy(x)
 
-    def __md_iter__(self) -> tuple[torch.Tensor, str]:
+    def __multi_domain_iter__(self) -> tuple[torch.Tensor, str]:
         """
         Return an iterator over the single domain dataset.
 
@@ -511,14 +511,14 @@ class NativeGridDataset(IterableDataset):
             current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
             if isinstance(current_domain_grid_shard_indices, slice):
                 # Load only shards into CPU memory
-                x = self.data[domain][start:end:timeincrement, :, :, grid_shard_indices]
+                x = self.data[domain][start:end:timeincrement, :, :, current_domain_grid_shard_indices]
 
             else:
                 # Load full grid in CPU memory, select grid_shard after
                 # Note that anemoi-datasets currently doesn't support slicing + indexing
                 # in the same operation.
                 x = self.data[domain][start:end:timeincrement, :, :, :]
-                x = x[..., grid_shard_indices]  # select the grid shard
+                x = x[..., current_domain_grid_shard_indices]  # select the grid shard
             x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
             self.ensemble_dim = 1
 
@@ -530,9 +530,9 @@ class NativeGridDataset(IterableDataset):
         Handles both single and multi-domain modes.
         """
         if self.dynamic_mode:
-            yield from self.__md_iter__()
+            yield from self.__multi_domain_iter__()
         else:
-            yield from self.__sd_iter__()
+            yield from self.__single_domain_iter__()
 
     def __repr__(self) -> str:
         if self.dynamic_mode:
