@@ -38,6 +38,7 @@ class EnsNativeGridDataset(NativeGridDataset):
         ens_members_per_device: int = 1,
         num_gpus_per_ens: int = 1,
         num_gpus_per_model: int = 1,
+        dynamic_mode: bool = False,
     ) -> None:
         """Initialize (part of) the dataset state.
 
@@ -72,6 +73,7 @@ class EnsNativeGridDataset(NativeGridDataset):
             shuffle=shuffle,
             grid_indices=grid_indices,
             label=label,
+            dynamic_mode=dynamic_mode,
         )
 
         # Lazy init
@@ -194,7 +196,8 @@ class EnsNativeGridDataset(NativeGridDataset):
         )
 
     def per_worker_init(self, n_workers: int, worker_id: int) -> None:
-        """Called by worker_init_func on each copy of dataset.
+        """
+        Called by worker_init_func on each copy of dataset.
 
         This initialises after the worker process has been spawned.
 
@@ -206,37 +209,48 @@ class EnsNativeGridDataset(NativeGridDataset):
             Worker ID
 
         """
-        super().per_worker_init(n_workers, worker_id)
+        if self.dynamic_mode:
+            LOGGER.warning(
+                (
+                    f"dynamic_mode: {self.dynamic_mode}." 
+                    "Multi domain enabled, support for EDA disabled." 
+                    "Defaulting to multi domain per worker init!"
+                )
+            )
 
-        base_seed = get_base_seed()
-        seed = (
-            base_seed * (self.sample_comm_group_id + 1) - worker_id
-        )  # note that test, validation etc. datasets get same seed
-        self.rng_inicond_sampling = np.random.default_rng(seed=seed)
-        sanity_rnd = self.rng.random(1)
-        sanity_rnd_ini = self.rng_inicond_sampling.random(1)
+            super().per_worker_init(n_workers, worker_id)
+        else:
+            super().multi_domain_per_worker_init(n_workers, worker_id)
 
-        LOGGER.info(
-            (
-                "Worker %d (%s, pid %d, glob. rank %d, model comm group %d, "
-                "model comm group rank %d, ens comm group %d, ens comm group rank %d, "
-                " seed group id %d, seed %d, sanity rnd %f, sanity rnd ini %f)"
-            ),
-            worker_id,
-            self.label,
-            os.getpid(),
-            self.global_rank,
-            self.model_comm_group_id,
-            self.model_comm_group_rank,
-            self.ens_comm_group_id,
-            self.ens_comm_group_rank,
-            self.sample_comm_group_id,
-            seed,
-            sanity_rnd,
-            sanity_rnd_ini,
-        )
+            base_seed = get_base_seed()
+            seed = (
+                base_seed * (self.sample_comm_group_id + 1) - worker_id
+            )  # note that test, validation etc. datasets get same seed
+            self.rng_inicond_sampling = np.random.default_rng(seed=seed)
+            sanity_rnd = self.rng.random(1)
+            sanity_rnd_ini = self.rng_inicond_sampling.random(1)
 
-    def __iter__(self):
+            LOGGER.info(
+                (
+                    "Worker %d (%s, pid %d, glob. rank %d, model comm group %d, "
+                    "model comm group rank %d, ens comm group %d, ens comm group rank %d, "
+                    " seed group id %d, seed %d, sanity rnd %f, sanity rnd ini %f)"
+                ),
+                worker_id,
+                self.label,
+                os.getpid(),
+                self.global_rank,
+                self.model_comm_group_id,
+                self.model_comm_group_rank,
+                self.ens_comm_group_id,
+                self.ens_comm_group_rank,
+                self.sample_comm_group_id,
+                seed,
+                sanity_rnd,
+                sanity_rnd_ini,
+            )
+
+    def __single_domain_iter__(self):
         """Return an iterator over the dataset.
 
         The datasets are retrieved by Anemoi Datasets from zarr files. This iterator yields
@@ -313,6 +327,91 @@ class EnsNativeGridDataset(NativeGridDataset):
                 sample = (torch.from_numpy(x_an),)
 
             yield sample
+    def __multi_domain_iter__(self) -> tuple[torch.Tensor, str]:
+        """Return an iterator over the dataset.
+
+        The datasets are retrieved by Anemoi Datasets from zarr files. This iterator yields
+        chunked batches for DDP and sharded training.
+        """
+        if self.shuffle:
+            shuffled_chunk_indices = {
+                domain : self.rng.choice(
+                    indices,
+                    size=len(indices),
+                    replace=False,
+                )[self.chunk_index_range[domain]] 
+                for domain, indices in self.valid_date_indices.items()
+            }
+        
+            labeled_sampels_and_indexes = [
+                (domain, i) 
+                for domain, inds in shuffled_chunk_indices.items() 
+                for i in inds
+            ]
+            # reshuffle the labeled (with their indexes) samples across domains
+            labeled_samples = self.rng.choice(
+                labeled_sampels_and_indexes,
+                size=len(labeled_sampels_and_indexes),
+                replace=False,
+            )
+
+        else:
+            shuffled_chunk_indices = {
+                domain : indices[self.chunk_index_range[domain]] 
+                for domain, indices in self.valid_date_indices.items()
+            }
+            labeled_sampels = [
+                (domain, i) 
+                for domain, inds in shuffled_chunk_indices.items() 
+                for i in inds
+            ]
+
+        LOGGER.debug(
+            (
+                "Worker pid %d, label %s, worker id %d, global_rank %d, "
+                "model comm group %d, group_rank %d, seed comm group id %d, using indices[0:10]: %s"
+            ),
+            os.getpid(),
+            self.label,
+            self.worker_id,
+            self.global_rank,
+            self.model_comm_group_id,
+            self.model_comm_group_rank,
+            self.sample_comm_group_id,
+            shuffled_chunk_indices[:10],
+        )
+
+        for batch in labeled_sampels:
+            domain, i = batch
+            # start and end time indices, for analysis and EDA
+            start = i + self.relative_date_indices[0]
+            end_an = i + self.relative_date_indices[-1] + 1
+            timeincrement = self.relative_date_indices[1] - self.relative_date_indices[0]
+            # NOTE: this is temporary until anemoi datasets allows indexing with arrays or lists
+            # data[start...] will be replaced with data[self.relative_date_indices + i]
+            end_eda = i + timeincrement
+
+            current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
+            if isinstance(current_domain_grid_shard_indices, slice):
+                # Load only shards into CPU memory
+                x_an = self.data[domain][start:end_an:timeincrement, :, 0:1, current_domain_grid_shard_indices]
+            else:
+                # Load full grid in CPU memory, select grid_shard after
+                # Note that anemoi-datasets currently doesn't support slicing + indexing
+                # in the same operation.
+                x_an = self.data[domain][start:end_an:timeincrement, :, 0:1, ...]
+                x_an = x_an[..., current_domain_grid_shard_indices]  # select the grid shard
+            x_an = rearrange(x_an, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
+
+            sample = (torch.from_numpy(x_an),)
+            yield sample, domain
+
+    def __iter__(self) -> torch.Tensor | tuple[torch.Tensor, str]:
+        """Return an iterator over the dataset."""
+        if self.dynamic_mode:
+            yield from self.__multi_domain_iter__()
+        else:
+            yield from self.__single_domain_iter__()
 
     def __repr__(self) -> str:
         return (
