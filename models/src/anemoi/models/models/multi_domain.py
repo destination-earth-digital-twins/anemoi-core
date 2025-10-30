@@ -11,7 +11,7 @@
 # TODO: ASK THOMAS
 
 import logging
-from typing import Optional, Dict
+from typing import Optional
 
 import einops
 import torch
@@ -35,9 +35,9 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         *,
         model_config: DotDict,
         data_indices: dict,
-        statistics: Dict[dict],
-        graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict],
+        statistics: dict[str,dict],
+        graph_data: dict[str,HeteroData],
+        truncation_data: dict[str,dict],
     ) -> None:
         """
         Initializes Determinstic Multi-Domain.
@@ -53,7 +53,10 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         truncation_data: Dict[dict]
             A dictonary of truncation matrices
         """
-
+        model_config = DotDict(model_config)
+        self.edge_dim = getattr(model_config.model, "edge_dim", 3)
+        self.node_dim = getattr(model_config.model, "node_dim", 4)
+        
         super().__init__(
             model_config=model_config,
             data_indices=data_indices,
@@ -61,18 +64,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             graph_data=graph_data,
             truncation_data=truncation_data,
         )
-
-        self.edge_dim = (
-            model_config.model.edge_dim
-            if hasattr(model_config.model, "edge_dim")
-            else 3
-        )
-        self.node_dim = (
-            model_config.model.node_dim
-            if hasattr(model_config.model, "node_dim")
-            else 4
-        )
-
+        self.current_graph_label = None
     def _calculate_input_dim(self):
         # overwrite base method
         # TODO: investigate in depth
@@ -139,12 +131,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             ],
             dim=-1,
         )
-
-        # TODO: investigate if this correct and gives correct shapes...
-        node_attributes_data = einops.repeat(
-            node_attributes_data, "grid -> grid batch_size", batch_size=batch_size
-        )
-
+        
         if grid_shard_shapes is not None:
             shard_shapes_nodes = get_or_apply_shard_shapes(
                 node_attributes_data,
@@ -192,10 +179,6 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             dim=-1,
         )
 
-        x_hidden_latent = einops.repeat(
-            x_hidden_latent, "grid -> grid batch_size", batch_size=batch_size
-        )
-
         shard_shapes_hidden = get_shard_shapes(
             x_hidden_latent, 0, model_comm_group=model_comm_group
         )
@@ -227,9 +210,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         x: torch.Tensor,
         graph_label: str,
         *,
-        fcaststep: Optional[
-            int
-        ] = None,  # <--- deterministic does not use it, just place holder
+        fcaststep: Optional[int] = None,  # <--- deterministic does not use it, just place holder
         model_comm_group: Optional[ProcessGroup] = None,
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
@@ -237,8 +218,10 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
 
         batch_size = x.shape[0]
         ensemble_size = x.shape[2]
-
-        graph = self.graph_data[graph_label]
+        graph = self._graph_data[graph_label]
+        
+        # create global attr for offloading to cpu later in forecaster
+        self.current_graph_label = graph_label
         graph.to(x.device)
 
         in_out_sharded = grid_shard_shapes is not None
@@ -247,7 +230,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
         )
 
         x_data_latent, x_skip, shard_shapes_data = self._assemble_input(
-            x, batch_size, grid_shard_shapes, model_comm_group
+            x, graph, batch_size, grid_shard_shapes, model_comm_group
         )
 
         x_hidden_latent, shard_shapes_hidden = self._assemble_hidden_latent(
@@ -304,9 +287,9 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         *,
         model_config: DotDict,
         data_indices: dict,
-        statistics: Dict[dict],
-        graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict],
+        statistics: dict[str,dict],
+        graph_data: dict[str, HeteroData],
+        truncation_data: dict[str, dict],
     ) -> None:
         """
         Initializes Ensemble Multi-Domain.
@@ -323,7 +306,11 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
             A dictonary of truncation matrices
         """
         super().__init__(
-            model_config, data_indices, statistics, graph_data, truncation_data
+            model_config=model_config, 
+            data_indices=data_indices, 
+            statistics=statistics, 
+            graph_data=graph_data, 
+            truncation_data=truncation_data
         )
 
     def _calculate_input_dim(self):
@@ -365,9 +352,9 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         )
 
         # TODO: investigate if this correct and gives correct shapes...
-        node_attributes_data = einops.repeat(
-            node_attributes_data, "grid -> grid bse", bse=bse
-        )
+        # node_attributes_data = einops.repeat(
+        #     node_attributes_data, "grid -> grid bse", bse=bse
+        # )
 
         if grid_shard_shapes is not None:
             shard_shapes_nodes = get_or_apply_shard_shapes(
@@ -436,7 +423,7 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
         x: torch.Tensor,
         graph_label: str,
         *,
-        fcststep: int,
+        fcstep: int,
         model_comm_group: Optional[ProcessGroup] = None,
         grid_shard_shapes: Optional[tuple] = None,
         **kwargs,
@@ -466,6 +453,8 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
 
         graph = self._graph_data[graph_label]
         graph.to(x.device)
+        self.current_graph_label = graph_label
+
 
         fcstep = min(1, fcstep)
 
@@ -530,17 +519,22 @@ class AnemoiMultiDomain(nn.Module):
         *,
         model_config: DotDict,
         data_indices: dict,
-        statistics: Dict[dict],
-        graph_data: Dict[HeteroData],
-        truncation_data: Dict[dict],
+        statistics: dict[str, dict],
+        graph_data: dict[str, HeteroData],
+        truncation_data: dict[str, dict],
     ) -> None:
+        if isinstance(model_config, dict):
+            model_config = DotDict(model_config)
 
         assert (
-            model_config.dynamic_mode
+            model_config.model.dynamic_mode
         ), f"You have chosen multi-domain, but you have not enabled dynamic_mode to True. Abort.."
 
+
+        #TODO: investigate how to use this class as interface for ENS and DET
         # TODO: add assert that only GT is supported for multi-domain (for now)
         # This is the model interface
+        #print(data_indices.data.input.name_to_index)
         self.model = instantiate(
             model_config.model.model_type,
             model_config=model_config,
@@ -551,8 +545,11 @@ class AnemoiMultiDomain(nn.Module):
         )
 
         assert isinstance(
-            self.model, [EnsembleMultiDomain, DeterministicMultiDomain]
-        ), f"Dynamic_mode enabled, please instaniate [EnsembleMultiDomain, DeterministicMultiDomain]. Abort.. "
+            self.model, (EnsembleMultiDomain, DeterministicMultiDomain)
+            ), (
+                "Dynamic_mode enabled, please instantiate one of: "
+                "[EnsembleMultiDomain, DeterministicMultiDomain]. Abort."
+            )
 
     def forward(
         self,
