@@ -112,6 +112,12 @@ class GraphEnsForecaster(BaseGraphModule):
         self.ensemble_ic_generator = EnsembleInitialConditions(config=config, data_indices=data_indices)
 
     def forward(self, x: torch.Tensor, fcstep: int, graph_label: str = None) -> torch.Tensor:
+        msg = (
+            f"Dynamic_mode disabled, but graph_label is provided. Got {graph_label}.",
+            "Do you mean to set dynamic_mode to True?"
+        )
+
+        #assert self.dynamic_mode == False and graph_label is not None, msg
         return self.model(
             x,
             graph_label=graph_label,
@@ -215,7 +221,7 @@ class GraphEnsForecaster(BaseGraphModule):
             self.data_indices.model.output.prognostic,
         ]
         if self.dynamic_mode and label is not None:
-            x[:, -1] = self.output_mask.rollout_boundary(
+            x[:, -1] = self.output_mask[label].rollout_boundary(
                 x[:, -1],
                 batch[:, self.multi_step + rollout_step],
                 self.data_indices,
@@ -267,7 +273,6 @@ class GraphEnsForecaster(BaseGraphModule):
         batch: torch.Tensor,
         rollout: int | None = None,
         validation_mode: bool = False,
-        label: str = None,
     ) -> Generator[tuple[torch.Tensor | None, dict, list]]:
         """Rollout step for the forecaster.
 
@@ -292,12 +297,15 @@ class GraphEnsForecaster(BaseGraphModule):
         None
             None
         """
+        label = None
+        if self.dynamic_mode and isinstance(batch, tuple):
+            batch, label = batch
+
         x = self.ensemble_ic_generator(
             batch[0],
             batch[1] if len(batch) == 2 else None,
         )
         LOGGER.debug("Shapes: batch[0][0].shape = %s, ens_ic.shape = %s", list(batch[0][0].shape), list(x.shape))
-
         assert len(x.shape) == 5, f"Expected a 5-dimensional tensor and got {len(x.shape)} dimensions, shape {x.shape}!"
         assert (x.shape[1] == self.multi_step) and (x.shape[2] == self.nens_per_device), (
             "Shape mismatch in x! "
@@ -356,13 +364,25 @@ class GraphEnsForecaster(BaseGraphModule):
         validation_mode: bool = False,
     ) -> tuple:
         """Training / validation step."""
-        LOGGER.debug(
-            "SHAPES: batch[0].shape = %s, batch[1].shape == %s",
-            list(batch[0].shape),
-            list(batch[1].shape) if len(batch) == 2 else "n/a",
-        )
 
-        loss = torch.zeros(1, dtype=batch[0].dtype, device=self.device, requires_grad=False)
+        if self.dynamic_mode:
+            LOGGER.debug(
+                "[DYNAMIC_MODE] SHAPES: batch[0][0].shape = %s, batch[1].shape == %s",
+                list(batch[0][0].shape),
+                list(batch[0][1].shape) if len(batch[0]) == 2 else "n/a",
+            )
+        else:
+            LOGGER.debug(
+                "SHAPES: batch[0].shape = %s, batch[1].shape == %s",
+                list(batch[0].shape),
+                list(batch[1].shape) if len(batch) == 2 else "n/a",
+            )
+        loss = torch.zeros(
+            1, 
+            dtype=batch[0][0].dtype if self.dynamic_mode else batch[0].dtype,
+            device=self.device, 
+            requires_grad=False
+        )
         metrics = {}
         y_preds = []
 
@@ -402,20 +422,16 @@ class GraphEnsForecaster(BaseGraphModule):
         """
         del batch_idx
 
-        label=None 
-        if self.dynamic_mode and isinstance(batch, tuple) and len(batch) =! 0:
-            batch, label = batch
-
-        train_loss, _, _, _ = self._step(batch, label=label)
+        train_loss, _, _, _ = self._step(batch)
 
         self.log(
-            "train_" + self.loss[label].name if self.dynamic_mode else self.loss.name,
+            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
             train_loss,
             on_epoch=True,
             on_step=True,
             prog_bar=True,
             logger=self.logger_enabled,
-            batch_size=batch[0].shape[0],
+            batch_size=batch[0][0].shape[0] if self.dynamic_mode else batch[0].shape[0],
             sync_dist=True,
         )
         self.log(
@@ -453,21 +469,18 @@ class GraphEnsForecaster(BaseGraphModule):
             Tuple containing the validation loss, the predictions, and the ensemble initial conditions
         """
         del batch_idx
-        label = None
-        if self.dynamic_mode and isinstance(batch, tuple) and len(batch) != 0:
-            batch, label = batch
 
         with torch.no_grad():
-            val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True, label=label)
+            val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True)
         
         self.log(
-            "val_" + self.loss[label].name if self.dynamic_mode else self.loss.name,
+            "val_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
             val_loss,
             on_epoch=True,
             on_step=True,
             prog_bar=True,
             logger=self.logger_enabled,
-            batch_size=batch[0].shape[0],
+            batch_size=batch[0][0].shape[0] if self.dynamic_mode else batch[0].shape[0],
             sync_dist=True,
         )
         for mname, mvalue in metrics.items():
@@ -478,7 +491,7 @@ class GraphEnsForecaster(BaseGraphModule):
                 on_step=False,
                 prog_bar=False,
                 logger=self.logger_enabled,
-                batch_size=batch[0].shape[0],
+                batch_size=batch[0][0].shape[0] if self.dynamic_mode else batch[0].shape[0],
                 sync_dist=True,
             )
 

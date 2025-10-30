@@ -166,8 +166,8 @@ class GraphForecaster(BaseGraphModule):
         """
         # start rollout of preprocessed batch
         label = None
-        if self.dynamic_mode:
-            x, label = batch
+        if self.dynamic_mode and isinstance(batch, tuple):
+            batch, label = batch
 
         x = batch[
             :,
@@ -175,6 +175,7 @@ class GraphForecaster(BaseGraphModule):
             ...,
             self.data_indices.data.input.full,
         ]  # (bs, multi_step, latlon, nvar)
+
         msg = (
             "Batch length not sufficient for requested multi_step length!"
             f", {batch.shape[1]} !>= {rollout + self.multi_step}"
@@ -210,7 +211,7 @@ class GraphForecaster(BaseGraphModule):
 
         loss = torch.zeros(
             1, 
-            dtype=batch[0].dtype if instance(batch, tuple) else batch.dtype, 
+            dtype=batch[0].dtype if isinstance(batch, tuple) else batch.dtype, 
             device=self.device, 
             requires_grad=False
         )
