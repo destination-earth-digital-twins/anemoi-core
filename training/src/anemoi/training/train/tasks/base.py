@@ -183,13 +183,27 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 ), graph_data
         )
 
+        if self.dynamic_mode:
+            # merge supporting_arrays per domain
+            merged_supporting_arrays = {
+                domain: (
+                    supporting_arrays[domain]
+                    | self.output_mask[domain].supporting_arrays
+                )
+                for domain in supporting_arrays.keys()
+            }
+        else:
+            # single global merge
+            merged_supporting_arrays = (
+                supporting_arrays | self.output_mask.supporting_arrays
+            )
+
         self.model = AnemoiModelInterface(
             statistics=statistics,
             statistics_tendencies=statistics_tendencies,
             data_indices=data_indices,
             metadata=metadata,
-            supporting_arrays=supporting_arrays
-            | self.output_mask.supporting_arrays,  # <-- would lead to conflict
+            supporting_arrays=merged_supporting_arrays,  # <-- would lead to conflict
             graph_data=graph_data,
             truncation_data=truncation_data,
             config=convert_to_omegaconf(config),
@@ -199,7 +213,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         self.save_hyperparameters()
         
-        self.latlons_data = self.mapper(
+        self.latlons_data = self._mapper(
             lambda G: G[config.graph.data].x, graph_data
         )
 
@@ -212,18 +226,18 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
 
         # TODO: check this out, maybe we need a dict of metadata_extractor
-
+        
         metadata_extractor = self._mapper(
             lambda _metadata: ExtractVariableGroupAndLevel(
                 variable_groups=config.model_dump(
                     by_alias=True
                 ).training.variable_groups,
-                metadata_variables=_metadata.get("variables_metadata") if self.dynamic_mode else metadata["dataset"].get("variables_metadata"),
-            ), metadata
+                metadata_variables=_metadata if self.dynamic_mode else _metadata["dataset"].get("variables_metadata"),
+            ), {label : domain.get("variables_metadata") for label, domain in metadata.items()} if self.dynamic_mode else metadata 
         )
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
-        self.scalers_and_updating_scalars = self.mapper(
+        self.scalers_and_updating_scalars = self._mapper(
                 lambda _G, _S, _ST, _ME, _OM: create_scalers(
                     config.model_dump(by_alias=True).training.scalers,
                     data_indices=data_indices,
@@ -273,7 +287,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
             self.scalers
             )
         
-        self._scaling_values_log[label] = self._mapper(
+        self._scaling_values_log = self._mapper(
             lambda _loss: print_variable_scaling(
                 _loss,
                 data_indices,
@@ -334,7 +348,6 @@ class BaseGraphModule(pl.LightningModule, ABC):
             self.grid_indices.setup(graph_data)
         self.grid_dim = -2
 
-        # check sharding support
         self.keep_batch_sharded = self.config.model.keep_batch_sharded
         read_group_supports_sharding = (
             reader_group_size == self.config.hardware.num_gpus_per_model
@@ -347,11 +360,24 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
 
         # set flag if loss and metrics support sharding
-        self.loss_supports_sharding = getattr(self.loss, "supports_sharding", False)
-        self.metrics_support_sharding = all(
-            getattr(metric, "supports_sharding", False)
-            for metric in self.metrics.values()
-        )
+        if self.dynamic_mode:
+            self.loss_supports_sharding = all(
+                getattr(_loss, "supports_sharding", False)
+                for _loss in self.loss.values()
+            
+            )
+            self.metrics_support_sharding = all(
+                getattr(_metric, "supports_sharding", False)
+                for label, labeled_metric in self.metrics.items()
+                for _metric in labeled_metric.values()
+            )
+        else:
+            self.loss_supports_sharding = getattr(self.loss, "supports_sharding", False)
+
+            self.metrics_support_sharding = all(
+                getattr(metric, "supports_sharding", False)
+                for metric in self.metrics.values()
+            )
 
         if not self.loss_supports_sharding and self.keep_batch_sharded:
             LOGGER.warning(
@@ -382,17 +408,15 @@ class BaseGraphModule(pl.LightningModule, ABC):
         self.grid_shard_slice = None
 
     def forward(self, x: torch.Tensor, graph_label: str = None) -> torch.Tensor:
-        # if self.dynamic_mode and isinstance(x, tuple):
-        #     assert (
-        #         len(x) == 2
-        #     ), f"Something went wrong, expecting tuple[torch.Tensor, str:graph_label]"
-        #     x_input, graph_label = x
-        # else:
-        #     x_input = x
-        #     graph_label = None
+        #TODO: add assertion or if test for dynamic mode
+
+        msg = (
+            f"Dynamic_mode {self.dynamic_mode}, but graph_label provided. Got {graph_label}.",
+            "Do you mean to set dynamic_mode to True?"
+        )
 
         return self.model(
-            x_input,
+            x,
             graph_label,
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
@@ -408,42 +432,60 @@ class BaseGraphModule(pl.LightningModule, ABC):
         returns:
             None
         """
-        self.model.current_graph.to("cpu")
+        if self.dynamic_mode:
+            _curr_label = self.model.model.current_graph_label
+            self.model.model._graph_data[_curr_label].to("cpu")
         
     def _mapper(
-        self, 
-        fn: Callable, 
-        *_input: tuple[dict[Any]] | Any, 
-        *args: Any, 
-        **kwargs: Any
+            self, 
+            fn: Callable, 
+            *_input: tuple[dict[Any]] | Any, 
+            **kwargs: Any
         ) -> Any:
-        """Apply a function to items of a dict or a single object.
+        """
+        Apply a function to items of a dict or a single object.
 
         If dynamic_mode=True, calls `fn(label, value, *args, **kwargs)` for each item.
         Otherwise, calls `fn(None, _dict, *args, **kwargs)` once.
 
         Parameters
         ----------
-        _input : tuple[dict[Any]] | Any
-            Dictionary to map over (or single object if not dynamic_mode)
         fn : Callable
             Function to apply per element: fn(label, value, *args, **kwargs)
-        *args, **kwargs
+        *_input : tuple[dict[Any]] | Any
+            Dictionary to map over (or single object if not dynamic_mode)
+        **kwargs
             Extra arguments passed to fn
         """
         if self.dynamic_mode:
-            if len(_input) >= 1 and all(isinstance(i, dict) for i in _input):
-                _keys = list(_input[0].keys())
+            if len(_input) >= 1 and all(isinstance(i, (dict, type(None))) for i in _input):
+                first_valid = next((i for i in _input if i is not None), None)
+                if first_valid is None:
+                    raise ValueError("No valid dict inputs found. All inputs are None.")
+                _keys = list(first_valid.keys()) #list(_input[0].keys())
 
-                for entry in _input[1:]:
-                    assert _keys == list(entry.keys()), "All dicts must share the same domains (keys)"
+                for index, entry in enumerate(_input):
+                    if entry is None:
+                        LOGGER.warning(f"Found that input number: {index} is of type None.")
+                        continue # skip, notice all _input are not None because of the guard above
+                    elif isinstance(entry, list) or list(entry.keys()) == ['mean', 'stdev', 'maximum', 'minimum']:
+                        LOGGER.info(f"Found that input number: {index} is of type list or a single statistics (regional or global), ignoring.")
+                        continue # skip
+                    else:
+                        assert _keys == list(entry.keys()), "All *_input dicts must include the same domain name keys"
             else:
-                raise ValueError(f"Expected multiple tuple of dicts or a tuple of single dict, got {len(_input)}")
-            return {label: fn(*[obj[k] for obj in _input], *args, **kwargs) 
+                raise ValueError(
+                    (
+                        f"Expected multiple tuple of dicts or a"
+                        f"tuple of single dict, got {len(_input)} "
+                        f"arguments of types {[type(i) for i in _input]}"
+                    )
+                )
+            return {label: fn(*[obj[label] if isinstance(obj,dict) and label in obj else obj for obj in _input],**kwargs) 
                     for label in _keys
             }
         else:
-            return fn(*_input, *args, **kwargs)
+            return fn(*_input, **kwargs)
 
     def on_load_checkpoint(self, checkpoint: torch.nn.Module) -> None:
         self._ckpt_model_name_to_index = checkpoint["hyper_parameters"][
@@ -528,8 +570,6 @@ class BaseGraphModule(pl.LightningModule, ABC):
             Prepared y_pred, y, and grid_shard_slice
         """
         
-        # TODO: investigate if this needs to be compatible with dynamic mode!
-
         is_sharded = self.grid_shard_slice is not None
 
         sharding_supported = (self.loss_supports_sharding or validation_mode) and (
@@ -694,17 +734,17 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after transfer
         """
-        if self.dynamic_mode and isinstance(batch, tuple):
-            batch, graph_label = batch
+        
+        if self.dynamic_mode and isinstance(batch, list):
+            batch, label = batch
         else:
             label = None
 
         # Gathering/sharding of batch
-        batch = self._setup_batch_sharding(batch)
+        batch = self._setup_batch_sharding(batch,label)
 
         # Batch normalization
         batch = self._normalize_batch(batch)
-
         # Prepare scalers, e.g. init delayed scalers and update scalers
         self._prepare_loss_scalers(label=label)
 
@@ -743,8 +783,12 @@ class BaseGraphModule(pl.LightningModule, ABC):
                     self.reader_group_rank
                 )
         else:
-            batch = self.allgather_batch(batch,label)
-            self.grid_shard_shapes, self.grid_shard_slice = None, None
+            if self.dynamic_mode and label is not None:
+                batch = self.allgather_batch(batch,label)
+                self.grid_shard_shapes, self.grid_shard_slice = None, None
+            else:
+                batch = self.allgather_batch(batch,label)
+                self.grid_shard_shapes, self.grid_shard_slice = None, None
         return batch
 
     def _normalize_batch(self, batch: torch.Tensor) -> torch.Tensor:
@@ -760,8 +804,6 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Normalized batch
         """
-        #if self.dynamic_mode and isinstance(batch, tuple):
-        #    batch, graph_label = batch
         return self.model.pre_processors(batch)
 
     def _prepare_loss_scalers(self, label: str = None) -> None:
@@ -885,7 +927,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         train_loss, _, _ = self._step(batch)
         self.log(
-            "train_" + self.loss.name + "_loss",
+            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name + "_loss",
             train_loss,
             on_epoch=True,
             on_step=True,
@@ -896,6 +938,10 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
 
         return train_loss
+
+    def on_before_batch_transfer(self, batch, dataloader_idx):
+        # TODO: remove this, just tmp for debugging
+        return batch  # must return the batch unchanged (or modified)
 
     def lr_scheduler_step(
         self, scheduler: CosineLRScheduler, metric: None = None
@@ -933,7 +979,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
             val_loss, metrics, y_preds = self._step(batch, validation_mode=True)
 
         self.log(
-            "val_" + self.loss.name + "_loss",
+            "val_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name + "_loss",
             val_loss,
             on_epoch=True,
             on_step=True,
@@ -951,7 +997,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 on_step=False,
                 prog_bar=False,
                 logger=self.logger_enabled,
-                batch_size=batch.shape[0],
+                batch_size=batch.shape[0] if isinstance(batch, torch.Tensor) else batch[0].shape[0],
                 sync_dist=True,
             )
 
