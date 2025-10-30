@@ -24,6 +24,7 @@ from torch_geometric.utils import softmax
 from anemoi.models.layers.mlp import MLP
 from anemoi.utils.config import DotDict
 
+#TODO : add compilation decorator!
 
 class GraphConv(MessagePassing):
     """Message passing module for convolutional node and edge interactions."""
