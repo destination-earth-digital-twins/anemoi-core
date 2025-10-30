@@ -11,6 +11,8 @@
 from abc import ABC
 from typing import Optional
 
+import torch
+
 from torch import Tensor
 from torch import nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import offload_wrapper
@@ -364,8 +366,8 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         num_heads: int,
         mlp_hidden_ratio: int,
         trainable_size: int,
-        src_grid_size: int,
-        dst_grid_size: int,
+        src_grid_size: int = None,
+        dst_grid_size: int = None,
         sub_graph_edge_attributes: list[str],
         sub_graph_edge_index_name: Optional[str] = None,
         sub_graph: Optional[HeteroData] = None,
@@ -421,7 +423,9 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         if self.dynamic_mode:
             assert edge_dim != 0, f"Expecting non zero value for edge_dim, got: {edge_dim}"
             assert sub_graph_edge_index_name is not None, f"Expecting a value to be set, got None"
-            
+            assert src_grid_size is None , f"dynamic_mode set to True, src_grid_size should be None"
+            assert dst_grid_size is None, f"dynamic_mode set to True, dst_grid_size should be None"
+
             self.edge_dim = edge_dim
             self.sub_graph_edge_index_name = sub_graph_edge_index_name
             self.sub_graph_edge_attributes = sub_graph_edge_attributes
@@ -429,16 +433,15 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
 
             trainable_size = 0
         else:
-            assert sub_graph is not None, , f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
-            assert sub_graph_edge_attributes is not None, , f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
+            assert sub_graph is not None, f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
+            assert sub_graph_edge_attributes is not None, f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
             assert src_size is not None , f"dynamic_mode set to f{dynamic_mode}, expect src_grid_size type: int"
             assert dst_grid_size is not None, f"dynamic_mode set to f{dynamic_mode}, expect dst_grid_size type: int"
 
             self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
         
-        self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
+            self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
 
-        self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
 
         self.build_layers(
             GraphTransformerProcessorChunk,
@@ -458,7 +461,7 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         x: Tensor,
         batch_size: int,
         shard_shapes: tuple[tuple[int], tuple[int]],
-        sub_graph: Optional[HeteroData] = None
+        sub_graph: Optional[HeteroData] = None,
         model_comm_group: Optional[ProcessGroup] = None,
         *args,
         **kwargs,
@@ -466,15 +469,16 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         size = sum(x[0] for x in shard_shapes)
 
         shape_nodes = change_channels_in_shape(shard_shapes, self.num_channels)
-        edge_attr = self.trainable(self.edge_attr, batch_size)
-        
+    
         if self.dynamic_mode:
             edge_index = sub_graph[self.sub_graph_edge_index_name].to(torch.int64)
             edge_attr = torch.cat(
                 [sub_graph[attr] for attr in self.sub_graph_edge_attributes], axis=1
             )
         else:
+            edge_attr = self.trainable(self.edge_attr, batch_size)
             edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
+
 
         shapes_edge_attr = get_shard_shapes(edge_attr, 0, model_comm_group)
         edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
