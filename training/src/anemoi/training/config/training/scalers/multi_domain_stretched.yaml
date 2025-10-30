@@ -50,7 +50,10 @@ node_weights:
   nodes_name: ${graph.data}
   nodes_attribute_name: area_weight
   scaling_mask_attribute_name: cutout_mask
-  weight_frac_of_total: ??? 
+  # weight_frac_of_total: ??? # <-- NOT USED HERE FOR MULTI DOMAIN STRETCHED
+  # This is done dynamically during runtime for each ReweightedGraphNodeAttributeScaler
+  # per domain. This is located now in training/multi_domain_ensemble_stretched.yaml
+  # or training/multi_domain_stretched.yaml
   norm: "unit-sum"
 
 lam_node_weights:

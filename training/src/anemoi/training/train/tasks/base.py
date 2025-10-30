@@ -237,8 +237,25 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
+        if self.dynamic_mode:
+            per_domain_weight_frac_of_total = OmegaConf.to_container(
+                getattr(
+                    config.model_dump(by_alias=True).training,
+                    "per_domain_weight_frac_of_total",
+                    {}
+                ),
+                resolve=True
+            )
+
+            msg = (
+                f"In dynamic mode, per_domain_weight_frac_of_total must be provided"
+                f"in the config under training.scalers. Got: {per_domain_weight_frac_of_total}"
+            )
+        
+            assert per_domain_weight_frac_of_total, msg
+
         self.scalers_and_updating_scalars = self._mapper(
-                lambda _G, _S, _ST, _ME, _OM: create_scalers(
+                lambda _G, _S, _ST, _ME, _OM, **extra_kwargs: create_scalers(
                     config.model_dump(by_alias=True).training.scalers,
                     data_indices=data_indices,
                     graph_data=_G,
@@ -246,12 +263,14 @@ class BaseGraphModule(pl.LightningModule, ABC):
                     statistics_tendencies=_ST,
                     metadata_extractor=_ME,
                     output_mask=_OM,
+                    **extra_kwargs
                 ),
                 graph_data, 
                 statistics, 
                 statistics_tendencies, 
                 metadata_extractor, 
-                self.output_mask
+                self.output_mask,
+                extra_kwargs=per_domain_weight_frac_of_total if self.dynamic_mode else {}
             )
         
         if self.dynamic_mode:
@@ -481,7 +500,13 @@ class BaseGraphModule(pl.LightningModule, ABC):
                         f"arguments of types {[type(i) for i in _input]}"
                     )
                 )
-            return {label: fn(*[obj[label] if isinstance(obj,dict) and label in obj else obj for obj in _input],**kwargs) 
+
+            extra_kwargs = kwargs.get("extra_kwargs", {}) or {}
+
+            return {label: fn(
+                    *[obj[label] if isinstance(obj,dict) and label in obj else obj for obj in _input],
+                    **(extra_kwargs.get(label, {}) if extra_kwargs else {})
+                ) 
                     for label in _keys
             }
         else:
