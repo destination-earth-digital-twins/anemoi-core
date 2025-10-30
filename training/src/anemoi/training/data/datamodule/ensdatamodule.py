@@ -11,7 +11,12 @@
 import logging
 from collections.abc import Callable
 
+import torch
+from omegaconf import DictConfig
+
+from anemoi.datasets.data import open_dataset
 from anemoi.training.data.dataset import EnsNativeGridDataset
+from anemoi.training.utils.worker_init import worker_init_func
 
 from .singledatamodule import AnemoiDatasetsDataModule
 
@@ -35,17 +40,43 @@ class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
 
     """
 
+    @staticmethod
+    def collate_fn(batch) -> list[list[torch.Tensor],str]:
+        """
+        Collate function for multi-domain datasets.
+        
+        Args:
+            batch: List of tuples -> [((tensor,), domain), ((tensor,), domain), ...]
+        
+        Returns:
+            tuple(tuple(tensor), list[str])
+            -> ((batched_tensor,), domains)
+        """
+        # Separate tensors and domain labels
+        samples, domains = zip(*batch)  # unzip into ((tensor,), (tensor,), ...), (domain, domain, ...)
+
+        assert all(domains[0] == d for d in domains), "All samples in the batch must belong to the same domain."
+
+        # Since each sample is a tuple (usually (tensor,)), unpack the inner tensors
+        tensors = [s for s in samples]
+        
+        # Stack tensors into a batch
+        batched_tensor = torch.stack(tensors, dim=0)
+
+        # Return ((batched_tensor,), list_of_domains)
+        return list(((batched_tensor,), domains[0]))
+
     def _get_dataset(
         self,
-        data_reader: Callable,
+        data_reader: Callable | DictConfig[str, dict],
         shuffle: bool = True,
         val_rollout: int = 1,
         label: str = "generic",
     ) -> EnsNativeGridDataset:
-        # TODO: revist this
-        if isinstance(data_reader, dict) and self.dynamic_mode:
+
+        if isinstance(data_reader, DictConfig) and self.dynamic_mode:
             data_reader = {
-                domain : open_dataset(data_set_config) for domain, dataset_config in data_reader.items()
+                domain : open_dataset(dataset_config) for domain, dataset_config in data_reader.items()
                 }
             data_reader = {
                 domain : self.add_trajectory_ids(reader) for domain, reader in data_reader.items()
@@ -63,4 +94,5 @@ class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
             ens_members_per_device=self.config.training.ensemble_size_per_device,
             num_gpus_per_ens=self.config.hardware.num_gpus_per_ensemble,
             num_gpus_per_model=self.config.hardware.num_gpus_per_model,
+            dynamic_mode=self.dynamic_mode,
         )
