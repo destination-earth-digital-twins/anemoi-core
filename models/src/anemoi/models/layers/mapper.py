@@ -291,14 +291,14 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             trainable_size = 0
 
         else:
-            assert sub_graph is not None, , f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
-            assert sub_graph_edge_attributes is not None, , f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
-            assert src_size is not None , f"dynamic_mode set to f{dynamic_mode}, expect src_grid_size type: int"
+            assert sub_graph is not None, f"dynamic_mode set to {dynamic_mode}, expecting sub_graph type: HeteroData"
+            assert sub_graph_edge_attributes is not None, f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
+            assert src_grid_size is not None , f"dynamic_mode set to {dynamic_mode}, expect src_grid_size type: int"
             assert dst_grid_size is not None, f"dynamic_mode set to f{dynamic_mode}, expect dst_grid_size type: int"
 
             self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
         
-        self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
+            self.trainable = TrainableTensor(trainable_size=trainable_size, tensor_size=self.edge_attr.shape[0])
 
         self.proc = GraphTransformerMapperBlock(
             in_channels=hidden_dim,
@@ -335,8 +335,8 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             edge_attr = self.trainable(self.edge_attr, batch_size)
             edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
         
-        assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
-        assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
+        #assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
+        #assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
 
         edge_attr, edge_index, shapes_edge_attr, shapes_edge_idx = sort_edges_1hop_sharding(
             size, edge_attr, edge_index, model_comm_group, relabel_dst_nodes=True
@@ -461,7 +461,7 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
 
         x_src, x_dst, edge_attr, edge_index, shapes_src, shapes_dst, cond = checkpoint(
             self.pre_process_edge_sharding_wrapper,
-            x=x,
+            x,
             shard_shapes,
             batch_size,
             model_comm_group,
@@ -524,8 +524,8 @@ class GraphTransformerBaseMapper(GraphEdgeMixin, BaseMapper):
             edge_attr = self.trainable(self.edge_attr, batch_size)
             edge_index = self._expand_edges(self.edge_index_base, self.edge_inc, batch_size)
 
-        assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
-        assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
+        #assert edge_attr is not None, f"Dynamic mode enabled. edge_attr is not being passed. This variable is set to None -> edge_attr: {edge_attr}"
+        #assert edge_index is not None, f"Dynamic mode enabled. edge_index is not being passed. This variable is set to None -> edge_index: {edge_index}"
 
         shapes_edge_attr = get_shard_shapes(edge_attr, 0, model_comm_group)
         edge_attr = shard_tensor(edge_attr, 0, shapes_edge_attr, model_comm_group)
@@ -605,10 +605,12 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
         sub_graph_edge_index_name: Optional[str] = None,
         src_grid_size: Optional[int] = None,
         dst_grid_size: Optional[int] = None,
+        edge_dim: Optional[int] = None,
         qk_norm: bool = False,
         cpu_offload: bool = False,
         layer_kernels: DotDict = None,
         shard_strategy: str = "edges",
+        dynamic_mode: bool = False,
     ) -> None:
         """Initialize GraphTransformerForwardMapper.
 
@@ -666,6 +668,7 @@ class GraphTransformerForwardMapper(ForwardMapperPreProcessMixin, GraphTransform
             dst_grid_size=dst_grid_size,
             layer_kernels=layer_kernels,
             shard_strategy=shard_strategy,
+            dynamic_mode=dynamic_mode,
         )
 
         self.emb_nodes_src = self.layer_factory.Linear(self.in_channels_src, self.hidden_dim)
@@ -721,6 +724,7 @@ class GraphTransformerBackwardMapper(BackwardMapperPostProcessMixin, GraphTransf
         cpu_offload: bool = False,
         layer_kernels: DotDict = None,
         shard_strategy: str = "edges",
+        dynamic_mode: bool = False,
     ) -> None:
         """Initialize GraphTransformerBackwardMapper.
 
@@ -752,6 +756,8 @@ class GraphTransformerBackwardMapper(BackwardMapperPostProcessMixin, GraphTransf
             Destination grid size
         initialise_data_extractor_zero : bool, default False:
             Whether to initialise the data extractor to zero
+        edge_dim: int, Optional
+            WRITE THIS
         qk_norm : bool, optional
             Whether to use query and key normalization, default False
         cpu_offload : bool, optional
@@ -781,6 +787,7 @@ class GraphTransformerBackwardMapper(BackwardMapperPostProcessMixin, GraphTransf
             edge_dim=edge_dim,
             layer_kernels=layer_kernels,
             shard_strategy=shard_strategy,
+            dynamic_mode=dynamic_mode,
         )
 
         self.node_data_extractor = nn.Sequential(
