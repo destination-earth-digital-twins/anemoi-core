@@ -13,8 +13,10 @@ from collections.abc import Callable
 from functools import cached_property
 
 import numpy as np
+import torch
 import pytorch_lightning as pl
 from hydra.utils import instantiate
+from omegaconf import OmegaConf,DictConfig
 from torch.utils.data import DataLoader
 from torch_geometric.data import HeteroData
 
@@ -52,7 +54,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
         self.graph_data = graph_data
 
         # Set the training end date if not specified
-        self.dynamic_mode:
+        if self.dynamic_mode:
             resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
             for dataset_label in resolved_training_conf:
                 if resolved_training_conf[dataset_label]["end"] is None:
@@ -60,7 +62,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
                         "No end date specified for training data, setting default before validation start date %s.",
                         resolved_training_conf[dataset_label]["start"] - 1,
                     )
-                resolved_training_conf[dataset_label]["end"] = resolved_training_conf[dataset_label]["start"] - 1
+                    resolved_training_conf[dataset_label]["end"] = resolved_training_conf[dataset_label]["start"] - 1
             # TODO: fix this..
         else:
             if self.config.dataloader.training.end is None:
@@ -75,12 +77,6 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     @cached_property
     def statistics(self) -> dict | dict[str, dict]:
-        # TODO: should it be a collection statistics..?
-        if self.dynamic_mode:
-            _statistics = {
-                label : domain.statistics for label, domain in self.ds_train.items()
-            }
-            return _statistics
         return self.ds_train.statistics
 
     @cached_property
@@ -93,12 +89,32 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     @cached_property
     def supporting_arrays(self) -> dict | dict[str, dict]:
-        # TODO: find out where this is used. Should this be disabled..=
+        if self.dynamic_mode:
+            return {
+                domain : _data | self.grid_indices[domain].supporting_arrays
+                for domain, _data in self.ds_train.supporting_arrays.items()
+            }
         return self.ds_train.supporting_arrays | self.grid_indices.supporting_arrays
 
     @cached_property
     def data_indices(self) -> IndexCollection:
         return IndexCollection(self.config, self.ds_train.name_to_index)
+
+    @cached_property
+    def data_variables(self) -> list | dict[str, list]:
+        if self.dynamic_mode:
+            data_vars = {
+                domain : _data.variables for domain, _data in self.ds_train.data.items()
+            }
+            
+            first_vars = next(iter(data_vars.values()))
+            assert all(vars_ == first_vars for vars_ in data_vars.values()), (
+                f"Variable sets do not match across domains!\n"
+                f"{ {k: sorted(v) for k, v in data_vars.items()} }"
+            )
+            return data_vars
+
+        return self.ds_train.data.variables
 
     def relative_date_indices(self, val_rollout: int = 1) -> list:
         """Determine a list of relative time indices to load for each batch."""
@@ -264,14 +280,14 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     def _get_dataset(
         self,
-        data_reader: dict[str] | Callable,
+        data_reader: DictConfig | Callable,
         shuffle: bool = True,
         val_rollout: int = 1,
         label: str = "generic",
     ) -> NativeGridDataset:
-        if isinstance(data_reader, dict) and self.dynamic_mode:
+        if isinstance(data_reader, DictConfig) and self.dynamic_mode:
             data_reader = {
-                domain : open_dataset(data_set_config) for domain, dataset_config in data_reader.items()
+                domain : open_dataset(dataset_config) for domain, dataset_config in data_reader.items()
                 }
             data_reader = {
                 domain : self.add_trajectory_ids(reader) for domain, reader in data_reader.items()
@@ -287,7 +303,13 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             shuffle=shuffle,
             grid_indices=self.grid_indices,
             label=label,
+            dynamic_mode=self.dynamic_mode,
         )
+
+    @staticmethod
+    def collate_fn(batch: list)-> tuple[torch.Tensor, str]:
+        #TODO: investigate this for num_workers>1
+        return (torch.stack([b[0] for b in batch]),batch[0][1])
 
     def _get_dataloader(self, ds: NativeGridDataset, stage: str) -> DataLoader:
         assert stage in {"training", "validation", "test"}
@@ -304,6 +326,9 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             # prefetch batches
             prefetch_factor=self.config.dataloader.prefetch_factor,
             persistent_workers=True,
+            # TODO: check if this is valid for when dynamic_mode is False
+            # batch shape (batch_size, Date, Ensemble, grid_points, features)
+            collate_fn=self.collate_fn if self.dynamic_mode else None#lambda batch: (torch.stack([b[0] for b in batch]),batch[0][1]), # <-- tuple(torch.Tensor, str), temp solution TODO: fix this..
         )
 
     def train_dataloader(self) -> DataLoader:
