@@ -574,7 +574,9 @@ class ScaleTensor(nn.Module):
 
             if subset_indices is not None:
                 reshaped_scaler = reshaped_scaler[subset_indices]
-
+            #print("inside scaletensor",out.device, reshaped_scaler.device)
+            #TODO: temp fix for device mismatch, ask slack about it
+            reshaped_scaler = reshaped_scaler.to(out.device)
             out = out * reshaped_scaler
 
         return out
