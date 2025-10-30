@@ -85,11 +85,9 @@ class AnemoiModelInterface(torch.nn.Module):
             [name, instantiate(processor, data_indices=self.data_indices, statistics=self.statistics)]
             for name, processor in self.config.data.processors.items()
         ]
-
         # Assign the processor list pre- and post-processors
         self.pre_processors = Processors(processors)
         self.post_processors = Processors(processors, inverse=True)
-
         # If tendencies statistics are provided, instantiate the tendencies processors
         if self.statistics_tendencies is not None:
             processors = [
@@ -99,7 +97,6 @@ class AnemoiModelInterface(torch.nn.Module):
             # Assign the processor list pre- and post-processors
             self.pre_processors_tendencies = Processors(processors)
             self.post_processors_tendencies = Processors(processors, inverse=True)
-
         # Instantiate the model
         # Only pass _target_ and _convert_ from model config to avoid passing diffusion as kwarg
         model_instantiate_config = {
@@ -115,10 +112,9 @@ class AnemoiModelInterface(torch.nn.Module):
             truncation_data=self.truncation_data,
             _recursive_=False,  # Disables recursive instantiation by Hydra
         )
-
         # Use the forward method of the model directly
         self.forward = self.model.forward
-
+        
     def predict_step(
         self, batch: torch.Tensor, model_comm_group: Optional[ProcessGroup] = None, gather_out: bool = True, **kwargs
     ) -> torch.Tensor:
@@ -152,6 +148,5 @@ class AnemoiModelInterface(torch.nn.Module):
             predict_kwargs["pre_processors_tendencies"] = self.pre_processors_tendencies
         if hasattr(self, "post_processors_tendencies"):
             predict_kwargs["post_processors_tendencies"] = self.post_processors_tendencies
-
         # Delegate to the model's predict_step implementation with processors
         return self.model.predict_step(**predict_kwargs, **kwargs)
