@@ -29,6 +29,7 @@ class InputNormalizer(BasePreprocessor):
         config=None,
         data_indices: Optional[IndexCollection] = None,
         statistics: Optional[dict] = None,
+        learnable: bool = False,
     ) -> None:
         """Initialize the normalizer.
 
@@ -40,9 +41,12 @@ class InputNormalizer(BasePreprocessor):
             Data indices for input and output variables
         statistics : dict
             Data statistics dictionary
+        learnable : [optional] bool, default False
+            Adds learnable correction for normalization parameters.
+            Itendend use for mixed resolution training.
         """
         super().__init__(config, data_indices, statistics)
-
+        self.learnable = learnable
         name_to_index_training_input = self.data_indices.data.input.name_to_index
 
         minimum = statistics["minimum"]
@@ -106,6 +110,13 @@ class InputNormalizer(BasePreprocessor):
         self.register_buffer("_input_idx", data_indices.data.input.full, persistent=True)
         self.register_buffer("_output_idx", self.data_indices.data.output.full, persistent=True)
 
+        if self.learnable:
+            self.norm_mul_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_mul))
+            self.norm_add_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_add)) 
+        else:
+            self._norm_mul_add_delta = None
+            self._norm_add_add_delta = None
+
     def _validate_normalization_inputs(self, name_to_index_training_input: dict, minimum, maximum, mean, stdev):
         assert len(self.methods) == sum(len(v) for v in self.method_config.values()), (
             f"Error parsing methods in InputNormalizer methods ({len(self.methods)}) "
@@ -130,6 +141,19 @@ class InputNormalizer(BasePreprocessor):
                 "max",
                 "none",
             ], f"{method} is not a valid normalisation method"
+
+
+    def _adaptive_mul(self):
+        mul = self._norm_mul
+        if self._norm_mul_add_delta is not None:
+            mul =(1 + self._norm_mul_add_delta)*mul
+        return mul
+    
+    def _adaptive_add(self):
+        mu = self._norm_add
+        if self._norm_add_add_delta is not None:
+            mu = mu + self._norm_add_add_delta
+        return mu
 
     def transform(
         self, x: torch.Tensor, in_place: bool = True, data_index: Optional[torch.Tensor] = None
@@ -158,12 +182,18 @@ class InputNormalizer(BasePreprocessor):
         if not in_place:
             x = x.clone()
 
+        _mul = self._adaptive_mul()
+        _add = self._adaptive_add()
+
         if data_index is not None:
-            x.mul_(self._norm_mul[data_index]).add_(self._norm_add[data_index])
+            #x.mul_(self._norm_mul[data_index]).add_(self._norm_add[data_index])
+            x.mul_(_mul[data_index]).add_(_add[data_index])
         elif x.shape[-1] == len(self._input_idx):
-            x.mul_(self._norm_mul[self._input_idx]).add_(self._norm_add[self._input_idx])
+            #x.mul_(self._norm_mul[self._input_idx]).add_(self._norm_add[self._input_idx])
+            x.mul_(_mul[self._input_idx]).add_(_add[self._input_idx])
         else:
-            x.mul_(self._norm_mul).add_(self._norm_add)
+            #x.mul_(self._norm_mul).add_(self._norm_add)
+            x.mul_(_mul).add_(_add)
 
         return x
 
@@ -194,13 +224,19 @@ class InputNormalizer(BasePreprocessor):
         if not in_place:
             x = x.clone()
 
+        _add = self._adaptive_add()
+        _mul = self._adaptive_mul()
+
         # Denormalize dynamic or full tensors
         # input and predicted tensors have different shapes
         # hence, we mask out the forcing indices
         if data_index is not None:
-            x.subtract_(self._norm_add[data_index]).div_(self._norm_mul[data_index])
+            #x.subtract_(self._norm_add[data_index]).div_(self._norm_mul[data_index])
+            x.subtract_(_add[data_index]).div_(_mul[data_index])
         elif x.shape[-1] == len(self._output_idx):
-            x.subtract_(self._norm_add[self._output_idx]).div_(self._norm_mul[self._output_idx])
+            #x.subtract_(self._norm_add[self._output_idx]).div_(self._norm_mul[self._output_idx])
+            x.subtract_(_add[self._output_idx]).div_(_mul[self._output_idx])
         else:
-            x.subtract_(self._norm_add).div_(self._norm_mul)
+            #x.subtract_(self._norm_add).div_(self._norm_mul)
+            x.subtract_(_add).div_(_mul)
         return x
