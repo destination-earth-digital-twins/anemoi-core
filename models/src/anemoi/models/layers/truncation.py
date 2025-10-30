@@ -58,12 +58,13 @@ class BaseTruncation:
             (stored as ``A_up``).
         """
         self.A_down, self.A_up = None, None
-        if "down" in truncation_data:
-            self.A_down = self._make_truncation_matrix(truncation_data["down"])
-            LOGGER.info("Truncation: A_down %s", self.A_down.shape)
-        if "up" in truncation_data:
-            self.A_up = self._make_truncation_matrix(truncation_data["up"])
-            LOGGER.info("Truncation: A_up %s", self.A_up.shape)
+        if truncation_data is not None:
+            if "down" in truncation_data:
+                self.A_down = self._make_truncation_matrix(truncation_data["down"])
+                LOGGER.info("Truncation: A_down %s", self.A_down.shape)
+            if "up" in truncation_data:
+                self.A_up = self._make_truncation_matrix(truncation_data["up"])
+                LOGGER.info("Truncation: A_up %s", self.A_up.shape)
 
     def _make_truncation_matrix(self, A, data_type=torch.float32):
         """Convert a SciPy sparse matrix to a coalesced PyTorch COO tensor.
