@@ -435,7 +435,7 @@ class GraphTransformerProcessor(GraphEdgeMixin, BaseProcessor):
         else:
             assert sub_graph is not None, f"dynamic_mode set to f{dynamic_mode}, expecting sub_graph type: HeteroData"
             assert sub_graph_edge_attributes is not None, f"dynamic_mode set to f{dynamic_mode}, expect sub_graph_edge_attributes type: list"
-            assert src_size is not None , f"dynamic_mode set to f{dynamic_mode}, expect src_grid_size type: int"
+            assert src_grid_size is not None , f"dynamic_mode set to f{dynamic_mode}, expect src_grid_size type: int"
             assert dst_grid_size is not None, f"dynamic_mode set to f{dynamic_mode}, expect dst_grid_size type: int"
 
             self._register_edges(sub_graph, sub_graph_edge_attributes, src_grid_size, dst_grid_size, trainable_size)
