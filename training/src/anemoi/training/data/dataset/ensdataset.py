@@ -218,9 +218,9 @@ class EnsNativeGridDataset(NativeGridDataset):
                 )
             )
 
-            super().per_worker_init(n_workers, worker_id)
-        else:
             super().multi_domain_per_worker_init(n_workers, worker_id)
+        else:
+            super().single_domain_per_worker_init(n_workers, worker_id)
 
             base_seed = get_base_seed()
             seed = (
@@ -343,15 +343,15 @@ class EnsNativeGridDataset(NativeGridDataset):
                 for domain, indices in self.valid_date_indices.items()
             }
         
-            labeled_sampels_and_indexes = [
+            labeled_samples_and_indexes = [
                 (domain, i) 
                 for domain, inds in shuffled_chunk_indices.items() 
                 for i in inds
             ]
             # reshuffle the labeled (with their indexes) samples across domains
             labeled_samples = self.rng.choice(
-                labeled_sampels_and_indexes,
-                size=len(labeled_sampels_and_indexes),
+                labeled_samples_and_indexes,
+                size=len(labeled_samples_and_indexes),
                 replace=False,
             )
 
@@ -360,12 +360,11 @@ class EnsNativeGridDataset(NativeGridDataset):
                 domain : indices[self.chunk_index_range[domain]] 
                 for domain, indices in self.valid_date_indices.items()
             }
-            labeled_sampels = [
+            labeled_samples = [
                 (domain, i) 
                 for domain, inds in shuffled_chunk_indices.items() 
                 for i in inds
             ]
-
         LOGGER.debug(
             (
                 "Worker pid %d, label %s, worker id %d, global_rank %d, "
@@ -378,18 +377,18 @@ class EnsNativeGridDataset(NativeGridDataset):
             self.model_comm_group_id,
             self.model_comm_group_rank,
             self.sample_comm_group_id,
-            shuffled_chunk_indices[:10],
+            labeled_samples[:10],
         )
 
-        for batch in labeled_sampels:
+        for batch in labeled_samples:
             domain, i = batch
             # start and end time indices, for analysis and EDA
-            start = i + self.relative_date_indices[0]
-            end_an = i + self.relative_date_indices[-1] + 1
+            start = int(i) + self.relative_date_indices[0]
+            end_an = int(i) + self.relative_date_indices[-1] + 1
             timeincrement = self.relative_date_indices[1] - self.relative_date_indices[0]
             # NOTE: this is temporary until anemoi datasets allows indexing with arrays or lists
             # data[start...] will be replaced with data[self.relative_date_indices + i]
-            end_eda = i + timeincrement
+            end_eda = int(i) + timeincrement
 
             current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
             if isinstance(current_domain_grid_shard_indices, slice):
@@ -403,7 +402,8 @@ class EnsNativeGridDataset(NativeGridDataset):
                 x_an = x_an[..., current_domain_grid_shard_indices]  # select the grid shard
             x_an = rearrange(x_an, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
 
-            sample = (torch.from_numpy(x_an),)
+            sample = torch.from_numpy(x_an)
+
             yield sample, domain
 
     def __iter__(self) -> torch.Tensor | tuple[torch.Tensor, str]:
