@@ -184,7 +184,7 @@ class GraphForecaster(BaseGraphModule):
 
         for rollout_step in range(rollout or self.rollout):
             # prediction at rollout step rollout_step, shape = (bs, latlon, nvar)
-            y_pred = self(x, label)
+            y_pred = self(x, graph_label=label)
 
             y = batch[:, self.multi_step + rollout_step, ..., self.data_indices.data.output.full]
             # y includes the auxiliary variables, so we must leave those out when computing the loss

@@ -436,7 +436,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         return self.model(
             x,
-            graph_label,
+            graph_label=graph_label,
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
         )
@@ -744,7 +744,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         return loss, metrics_next
 
-    def on_after_batch_transfer(self, batch: tuple[torch.Tensor,str] | torch.Tensor, _: int) -> tuple[torch.Tensor, str]:
+    def on_after_batch_transfer(
+        self, 
+        batch: list[torch.Tensor,str] | torch.Tensor,
+        _: int
+        ) -> torch.Tensor | tuple[torch.Tensor, str]:
         """Assemble batch after transfer to GPU by gathering the batch shards if needed.
 
         Also normalize the batch in-place if needed.
@@ -759,7 +763,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         torch.Tensor
             Batch after transfer
         """
-        
+
         if self.dynamic_mode and isinstance(batch, list):
             batch, label = batch
         else:
@@ -770,10 +774,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         # Batch normalization
         batch = self._normalize_batch(batch)
+
         # Prepare scalers, e.g. init delayed scalers and update scalers
         self._prepare_loss_scalers(label=label)
 
-        return batch, label
+        return (batch, label) if self.dynamic_mode else batch
 
     def _setup_batch_sharding(
         self, 
