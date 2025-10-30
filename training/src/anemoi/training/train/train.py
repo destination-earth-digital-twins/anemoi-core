@@ -61,15 +61,13 @@ class AnemoiTrainer:
         # Resolve the config to avoid shenanigans with lazy loading
 
         dynamic_mode = config.model.get("dynamic_mode", False)
-        if dynamic_mode:
-            LOGGER.info("Dynamic mode enabled.")
-            config = self.get_processed_configs(config)
 
         # Choose between single domain and multi-domain runs
         assert isinstance(
             config.model.dynamic_mode, bool
         ), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
         if config.model.dynamic_mode:
+            LOGGER.info("Dynamic mode enabled.")
             config = self.get_processed_configs(config)
 
         if config.config_validation:
@@ -157,11 +155,11 @@ class AnemoiTrainer:
             convert_to_omegaconf(self.config),
             self.graph_data,
         )
-        self.config.data.num_features = len(datamodule.ds_train.data.variables)
+        self.config.data.num_features = len(datamodule.data_variables) #len(datamodule.ds_train.data.variables)
         LOGGER.info(
-            "Number of data variables: %s", str(len(datamodule.ds_train.data.variables))
+            "Number of data variables: %s", str(len(datamodule.data_variables)) #str(len(datamodule.ds_train.data.variables))
         )
-        LOGGER.info("Variables: %s", str(datamodule.ds_train.data.variables))
+        LOGGER.info("Variables: %s", str(datamodule.data_variables)) #str(datamodule.ds_train.data.variables))
         return datamodule
 
     @cached_property
@@ -406,6 +404,21 @@ class AnemoiTrainer:
     @cached_property
     def metadata(self) -> dict:
         """Metadata and provenance information."""
+        if self.dynamic_mode:
+            return {
+                    label: map_config_to_primitives({
+                    "version": "1.0",
+                    "config": convert_to_omegaconf(self.config),
+                    "seed": self.initial_seed,
+                    "run_id": self.run_id,
+                    "dataset": metadata,
+                    "data_indices": self.datamodule.data_indices,
+                    "provenance_training": gather_provenance_info(),
+                    "timestamp": datetime.datetime.now(tz=datetime.timezone.utc),
+                    }
+                )
+                for label, metadata in self.datamodule.metadata.items()
+            }
         return map_config_to_primitives(
             {
                 "version": "1.0",
@@ -481,7 +494,7 @@ class AnemoiTrainer:
 
     def _log_information(self) -> None:
         # Log number of variables (features)
-        num_fc_features = len(self.datamodule.ds_train.data.variables) - len(
+        num_fc_features = len(self.datamodule.data_variables) - len(
             self.config.data.forcing
         )
         LOGGER.info("Total number of prognostic variables: %d", num_fc_features)
