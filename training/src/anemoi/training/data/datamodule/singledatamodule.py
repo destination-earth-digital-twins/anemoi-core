@@ -328,7 +328,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             persistent_workers=True,
             # TODO: check if this is valid for when dynamic_mode is False
             # batch shape (batch_size, Date, Ensemble, grid_points, features)
-            collate_fn=self.collate_fn if self.dynamic_mode else None#lambda batch: (torch.stack([b[0] for b in batch]),batch[0][1]), # <-- tuple(torch.Tensor, str), temp solution TODO: fix this..
+            collate_fn=self.collate_fn if self.dynamic_mode else None
         )
 
     def train_dataloader(self) -> DataLoader:
