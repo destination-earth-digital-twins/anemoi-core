@@ -63,6 +63,7 @@ class NativeGridDataset(IterableDataset):
         self.label = label
 
         self.data = data_reader
+        self.dynamic_mode = dynamic_mode
 
         self.timestep = timestep
         self.grid_indices = grid_indices
@@ -88,26 +89,59 @@ class NativeGridDataset(IterableDataset):
         self.chunk_index_range: np.ndarray | None = None
         self.shuffle = shuffle
 
-        # Data dimensions
-        self.ensemble_dim: int = 2
-        self.ensemble_size = self.data.shape[self.ensemble_dim]
-
         # relative index of dates to extract
         self.relative_date_indices = relative_date_indices
 
+        # Data dimensions
         if self.dynamic_mode:
-            self.num_domain = len(self.data)
-            self.all_labels = list(self.data.keys())
+            self.ensemble_dim: int = 2
+            self.ensemble_size = {
+                domain: _data.shape[self.ensemble_dim] 
+                for domain, _data in self.data.items()
+            }
+        else:
+            self.ensemble_dim: int = 2
+            self.ensemble_size = self.data.shape[self.ensemble_dim]
+
+
 
 
     @cached_property
     def statistics(self) -> dict[dict] | dict:
         """Return dataset statistics."""
         if self.dynamic_mode:
-                _statistics = {
-                    label : domain.statistics for label, domain in self.data.items()
-                }
-                return _statistics
+            _statistics = {
+                label : domain.statistics for label, domain in self.data.items()
+            }
+
+            _first_stats = next(iter(_statistics.keys()))
+            check_stats = all(
+                d == _first_stats for d in _statistics.keys()
+            )
+            try:
+                first_domain = self.data[next(iter(self.data.keys()))]
+                stat_path = first_domain.arguments["args"][0].get("statistics", "")
+                check_aifs_ds = isinstance(stat_path, str) and "aifs" in stat_path.lower()
+            except (KeyError, IndexError, AttributeError):
+                check_aifs_ds = False
+            
+            if _first_stats and check_aifs_ds:
+                LOGGER.info(
+                    (
+                        "All data statistics matches, found ERA5."
+                        "Using these statistics for normalization."
+                    )
+                )
+            else:
+                LOGGER.info(
+                    (
+                        "All data statistics does not match!"
+                        "Using the statistics from the first dataset for normalization."
+                        f" Using dataset statistics: {next(iter(_statistics.keys()))}"
+                    )
+                )
+
+            return next(iter(_statistics.values()))
         return self.data.statistics
 
     @cached_property
@@ -127,7 +161,7 @@ class NativeGridDataset(IterableDataset):
         """Return dataset metadata."""
         if self.dynamic_mode:
             return {
-                label : domain.metadata for label, domain in self.data.items()
+                label : domain.metadata() for label, domain in self.data.items()
             }
         return self.data.metadata()
 
@@ -454,7 +488,6 @@ class NativeGridDataset(IterableDataset):
         Currently it receives data with an ensemble dimension, which is discarded for
         now. (Until the code is "ensemble native".)
         """
-
         if self.shuffle:
             shuffled_chunk_indices = {
                 domain : self.rng.choice(
@@ -465,15 +498,15 @@ class NativeGridDataset(IterableDataset):
                 for domain, indices in self.valid_date_indices.items()
             }
         
-            labeled_sampels_and_indexes = [
+            labeled_samples_and_indexes = [
                 (domain, i) 
                 for domain, inds in shuffled_chunk_indices.items() 
                 for i in inds
             ]
             # reshuffle the labeled (with their indexes) samples across domains
             labeled_samples = self.rng.choice(
-                labeled_sampels_and_indexes,
-                size=len(labeled_sampels_and_indexes),
+                labeled_samples_and_indexes,
+                size=len(labeled_samples_and_indexes),
                 replace=False,
             )
 
@@ -482,7 +515,7 @@ class NativeGridDataset(IterableDataset):
                 domain : indices[self.chunk_index_range[domain]] 
                 for domain, indices in self.valid_date_indices.items()
             }
-            labeled_sampels = [
+            labeled_samples = [
                 (domain, i) 
                 for domain, inds in shuffled_chunk_indices.items() 
                 for i in inds
@@ -500,19 +533,17 @@ class NativeGridDataset(IterableDataset):
             self.model_comm_group_id,
             self.model_comm_group_rank,
             self.sample_comm_group_id,
-            labeled_sampels[:10],
+            labeled_samples[:10],
         )
         for batch in labeled_samples:
             domain, i = batch 
-            start = i + self.relative_date_indices[0]
-            end = i + self.relative_date_indices[-1] + 1
+            start = int(i) + self.relative_date_indices[0]
+            end = int(i) + self.relative_date_indices[-1] + 1
             timeincrement = self.relative_date_indices[1] - self.relative_date_indices[0]
-
             current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
             if isinstance(current_domain_grid_shard_indices, slice):
                 # Load only shards into CPU memory
                 x = self.data[domain][start:end:timeincrement, :, :, current_domain_grid_shard_indices]
-
             else:
                 # Load full grid in CPU memory, select grid_shard after
                 # Note that anemoi-datasets currently doesn't support slicing + indexing
@@ -521,7 +552,6 @@ class NativeGridDataset(IterableDataset):
                 x = x[..., current_domain_grid_shard_indices]  # select the grid shard
             x = rearrange(x, "dates variables ensemble gridpoints -> dates ensemble gridpoints variables")
             self.ensemble_dim = 1
-
             yield torch.from_numpy(x), domain
 
     def __iter__(self) -> torch.Tensor | tuple[torch.Tensor, str]:
@@ -546,4 +576,4 @@ class NativeGridDataset(IterableDataset):
             {super().__repr__()}
             Dataset: {self.data}
             Relative dates: {self.relative_date_indices}
-        """
+            """
