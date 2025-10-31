@@ -1018,9 +1018,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
             sync_dist=True,
         )
 
+        # NOTE: Log each mvalue wrt to its domain if dynamic mode is enabled
+        # when dynamic_mode is disabled it defaults to normal with non labeled mname
         for mname, mvalue in metrics.items():
             self.log(
-                "val_" + mname,
+                "val_" + mname + f"_{str(batch[1])}" if self.dynamic_mode else "val_" + mname,
                 mvalue,
                 on_epoch=True,
                 on_step=False,
