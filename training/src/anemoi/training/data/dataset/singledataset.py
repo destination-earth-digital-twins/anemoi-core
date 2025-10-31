@@ -270,7 +270,7 @@ class NativeGridDataset(IterableDataset):
             reader_group_rank,
         )
 
-    def single_per_worker_init(self, n_workers: int, worker_id: int) -> None:
+    def single_domain_per_worker_init(self, n_workers: int, worker_id: int) -> None:
         """Called by worker_init_func on each copy of dataset.
 
         This initialises after the worker process has been spawned.
