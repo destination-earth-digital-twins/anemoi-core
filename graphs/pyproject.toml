@@ -50,6 +50,7 @@ dependencies = [
   "torch>=2.2",
   "torch-geometric>=2.3.1",
   "typeguard>=4",
+  "trimesh",
 ]
 
 optional-dependencies.all = [ "anemoi-graphs[anemoi,healpix,hex,tri]" ]
