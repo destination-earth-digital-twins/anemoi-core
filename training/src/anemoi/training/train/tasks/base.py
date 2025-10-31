@@ -887,8 +887,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
             batch,
             group=self.reader_groups[self.reader_group_id],
         )
-
-        return torch.cat(tensor_list, dim=self.grid_dim),
+        return torch.cat(tensor_list, dim=self.grid_dim)
 
     def calculate_val_metrics(
         self,
