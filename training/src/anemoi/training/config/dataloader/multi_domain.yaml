@@ -63,6 +63,13 @@ regional_datasets: null
 training_periods: null 
 validation_periods: null 
 
+dataset_weights: null # optional weights for each regional dataset during training
+# ==== Example =====
+# - domain1: 0.7
+# - domain2: 0.3
+# - domain3: 1.0
+
+
 # regional_dataset, training_periods and validation_periods is automatically 
 # injected to training/validation during runtime
 # resulting in training = {'region_1': {dataset: 'path/to/region_1_dataset.nc', start: START, end: END}, {'region_2': {'dataset' : 'path/to/region_2_dataset.nc', start: START, end: END}}

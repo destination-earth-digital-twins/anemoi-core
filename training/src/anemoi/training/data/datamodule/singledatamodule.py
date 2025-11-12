@@ -52,7 +52,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
         self.config = config
         self.dynamic_mode = self.config.model.dynamic_mode
         self.graph_data = graph_data
-
+        self.dataset_weights = getattr(self.config.dataloader, "dataset_weights", None)
         # Set the training end date if not specified
         if self.dynamic_mode:
             resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
@@ -99,6 +99,24 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     @cached_property
     def data_indices(self) -> IndexCollection:
         return IndexCollection(self.config, self.ds_train.name_to_index)
+
+    @cached_property
+    def field_shapes(self) -> tuple | dict[str, tuple] | None:
+        if self.dynamic_mode:
+            LOGGER.info("Dynamic mode enabled. Creating a dictonary of field shape:")
+            return {
+                domain : {"field_shape" : _data.field_shape} for domain, _data in self.ds_train.data.items()
+            }
+        
+        _field_shape = self.ds_train.data.field_shape
+        LOGGER.info("Field shape: %s", _field_shape)
+        if len(_field_shape)==1:
+            LOGGER.warning(
+                "Field shape has only one dimension, is this expected? %s . Returning None",
+                _field_shape,
+            )
+            return None
+        return {"field_shape" : _field_shape}
 
     @cached_property
     def data_variables(self) -> list | dict[str, list]:
@@ -304,6 +322,7 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             grid_indices=self.grid_indices,
             label=label,
             dynamic_mode=self.dynamic_mode,
+            dataset_weights=self.dataset_weights
         )
 
     @staticmethod

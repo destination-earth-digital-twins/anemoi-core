@@ -39,6 +39,7 @@ class EnsNativeGridDataset(NativeGridDataset):
         num_gpus_per_ens: int = 1,
         num_gpus_per_model: int = 1,
         dynamic_mode: bool = False,
+        dataset_weights: dict[str,float] | None = None,
     ) -> None:
         """Initialize (part of) the dataset state.
 
@@ -74,6 +75,7 @@ class EnsNativeGridDataset(NativeGridDataset):
             grid_indices=grid_indices,
             label=label,
             dynamic_mode=dynamic_mode,
+            dataset_weights=dataset_weights,
         )
 
         # Lazy init

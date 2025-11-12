@@ -38,6 +38,7 @@ class NativeGridDataset(IterableDataset):
         shuffle: bool = True,
         label: str = "generic",
         dynamic_mode: bool = False,
+        dataset_weights: dict[str, float] | None = None,
     ) -> None:
         """Initialize (part of) the dataset state.
 
@@ -92,6 +93,7 @@ class NativeGridDataset(IterableDataset):
         # relative index of dates to extract
         self.relative_date_indices = relative_date_indices
 
+        self.dataset_weights = dataset_weights
         # Data dimensions
         if self.dynamic_mode:
             self.ensemble_dim: int = 2
@@ -135,8 +137,8 @@ class NativeGridDataset(IterableDataset):
             else:
                 LOGGER.info(
                     (
-                        "All data statistics does not match!"
-                        "Using the statistics from the first dataset for normalization."
+                        "All data statistics does not match! "
+                        "Using the first dataset for normalization."
                         f" Using dataset statistics: {next(iter(_statistics.keys()))}"
                     )
                 )
@@ -206,6 +208,41 @@ class NativeGridDataset(IterableDataset):
         for every relative_date_index i.
         """
         if self.dynamic_mode:
+            if self.dataset_weights and self.label == "train":
+                from math import ceil
+
+                base_seed = get_base_seed()
+                torch.manual_seed(base_seed)
+                random.seed(base_seed)
+                _rng = np.random.default_rng(seed=base_seed)
+
+                assert len(self.dataset_weights) == len(self.data), (
+                    f"Number of labels in data does not match the amount of labels in dataset_weights" 
+                    f"Got {len(self.data)} labels in data and {len(self.dataset_weights)} in dataset_weights." 
+                )
+                usable_indices = {}
+                for label, domain in self.data.items():
+                    curr_frac = self.dataset_weights[label] # <- ARA: 70% = 0.7
+                    assert curr_frac <= 1.0, f"Dataset weights cannot be larger than 1.0, got {curr_frac} for domain {label}."
+                    LOGGER.info(f"Using dataset weight fraction {curr_frac} for domain {label}.")
+                    current_all_indices = get_usable_indices(
+                        domain.missing,
+                        len(domain),
+                        np.array(self.relative_date_indices, dtype=np.int64),
+                        domain.trajectory_ids,
+                    )
+                    original_length = len(current_all_indices)
+                    if curr_frac < 1.0:
+                        current_all_indices = _rng.choice(
+                            current_all_indices,
+                            size=len(current_all_indices),
+                            replace=False,
+                        )
+                        current_all_indices = current_all_indices[: ceil(len(current_all_indices) * curr_frac)]
+                    LOGGER.info(f"Domain {label} has length: {len(current_all_indices)}/{original_length} after applying dataset weight {curr_frac}.")
+                    usable_indices[label] = current_all_indices
+                return usable_indices
+                
             return {
                 label: get_usable_indices(
                     domain.missing,
@@ -418,7 +455,7 @@ class NativeGridDataset(IterableDataset):
         if self.dynamic_mode:
             self.multi_domain_per_worker_init(n_workers, worker_id)
         else:
-            self.single_per_worker_init(n_workers, worker_id)
+            self.single_domain_per_worker_init(n_workers, worker_id)
 
     
     def __single_domain_iter__(self) -> torch.Tensor:

@@ -95,4 +95,5 @@ class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
             num_gpus_per_ens=self.config.hardware.num_gpus_per_ensemble,
             num_gpus_per_model=self.config.hardware.num_gpus_per_model,
             dynamic_mode=self.dynamic_mode,
+            dataset_weights=self.dataset_weights,
         )
