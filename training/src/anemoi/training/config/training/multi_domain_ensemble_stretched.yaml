@@ -93,12 +93,29 @@ training_loss:
 # These metrics are calculated in the output model space, and thus
 # have undergone postprocessing.
 validation_metrics:
-  # loss class to initialise, can be anything subclassing torch.nn.Module
+  # loss class to initialise
   fkcrps:
     _target_: anemoi.training.losses.kcrps.AlmostFairKernelCRPS
+    # Scalers to include in loss calculation
+    # Cannot scale over the variable dimension due to possible remappings.
+    # Available scalers include:
+    # - 'loss_weights_mask': Giving imputed NaNs a zero weight in the loss function
+    # Use the `scale_validation_metrics` section to variable scale.
     scalers: ['node_weights']
-    ignore_nans: False
-    alpha: 1.0
+    # other kwargs
+    ignore_nans: True
+  fkcrps_inside_lam_contribution:
+    _target_: anemoi.training.losses.kcrps.AlmostFairKernelCRPS
+    scalers: ['limited_area_mask', 'node_weights']
+    ignore_nans: True
+  fkcrps_outside_lam_contribution:
+    _target_: anemoi.training.losses.kcrps.AlmostFairKernelCRPS
+    scalers: ['outside_lam_mask', 'node_weights']
+    ignore_nans: True
+  fkcrps_inside_lam:
+    _target_: anemoi.training.losses.kcrps.AlmostFairKernelCRPS
+    scalers: ['lam_node_weights']
+    ignore_nans: True
 
 # Variable groups definition for scaling
 # The variable level scaling methods are defined under training/scalers
