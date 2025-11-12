@@ -111,8 +111,10 @@ class InputNormalizer(BasePreprocessor):
         self.register_buffer("_output_idx", self.data_indices.data.output.full, persistent=True)
 
         if self.learnable:
-            self.norm_mul_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_mul))
-            self.norm_add_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_add)) 
+            LOGGER.info("InputNormalizer: Using learnable normalization corrections coefficients.")
+            LOGGER.warning("Not using inplace operations. This may increase memory consumption.")
+            self._norm_mul_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_mul))
+            self._norm_add_add_delta = torch.nn.Parameter(torch.zeros_like(self._norm_add)) 
         else:
             self._norm_mul_add_delta = None
             self._norm_add_add_delta = None
@@ -179,7 +181,7 @@ class InputNormalizer(BasePreprocessor):
         torch.Tensor
             _description_
         """
-        if not in_place:
+        if not in_place: # or self.learnable:
             x = x.clone()
 
         _mul = self._adaptive_mul()
