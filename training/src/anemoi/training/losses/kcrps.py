@@ -107,6 +107,7 @@ class AlmostFairKernelCRPS(BaseLoss):
         alpha: float = 1.0,
         no_autocast: bool = True,
         ignore_nans: bool = False,
+        field_shape: tuple[int, int] | None = None,
         **kwargs,
     ) -> None:
         """Latitude- and (inverse-)variance-weighted kernel CRPS loss.

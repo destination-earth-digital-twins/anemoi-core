@@ -17,6 +17,7 @@ from .mae import MAELoss
 from .mse import MSELoss
 from .rmse import RMSELoss
 from .weighted_mse import WeightedMSELoss
+from .fft import AFCRPSFFTLoss, CRPSFFTLoss
 
 __all__ = [
     "AlmostFairKernelCRPS",
@@ -29,4 +30,6 @@ __all__ = [
     "RMSELoss",
     "WeightedMSELoss",
     "get_loss_function",
+    "AFCRPSFFTLoss",
+    "CRPSFFTLoss",
 ]
