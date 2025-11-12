@@ -258,6 +258,7 @@ class AnemoiTrainer:
             "statistics": self.datamodule.statistics,
             "statistics_tendencies": self.datamodule.statistics_tendencies,
             "supporting_arrays": self.supporting_arrays,
+            "field_shape": self.datamodule.field_shapes
         }
 
         model_task = get_class(self.config.training.model_task)

@@ -42,6 +42,7 @@ class GraphForecaster(BaseGraphModule):
         data_indices: IndexCollection,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -59,6 +60,9 @@ class GraphForecaster(BaseGraphModule):
             Provenance information
         supporting_arrays : dict
             Supporting NumPy arrays to store in the checkpoint
+        field_shape : tuple[int, int] | dict[str, tuple[int, int]] | None | None
+            X,Y shape of the data fields. For None regular grid such as ERA5 and IFS 
+            this field shape is set None as field_shape has shape (NumGridPoints,)
 
         """
         super().__init__(
@@ -70,6 +74,8 @@ class GraphForecaster(BaseGraphModule):
             data_indices=data_indices,
             metadata=metadata,
             supporting_arrays=supporting_arrays,
+            field_shape=None, # <-- only needed for FFT loss in ens mode
+            # TODO: check if we could implement FFT for non-crps loss
         )
 
         self.rollout = config.training.rollout.start

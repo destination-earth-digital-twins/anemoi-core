@@ -141,6 +141,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         data_indices: IndexCollection,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -158,6 +159,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
             Provenance information
         supporting_arrays : dict
             Supporting NumPy arrays to store in the checkpoint
+        field_shape : tuple[int, int] | dict[str, tuple[int, int]]
+            x,y shape of the data fields
 
         """
         super().__init__()
@@ -210,6 +213,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
         self.config = config
         self.data_indices = data_indices
+        self._check_valid_field_shape
+        self.field_shape = field_shape
 
         self.save_hyperparameters()
         
@@ -293,17 +298,19 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 config,
                 data_indices,
                 metadata_extractor=ME,
-            ), metadata_extractor
+            ), 
+            metadata_extractor,
         )
 
-        # do we need N losses? where N is number of graphs/domain.
         self.loss = self._mapper(
-            lambda _scalers : get_loss_function(
+            lambda _scalers, **extra_kwargs: get_loss_function(
                 config.model_dump(by_alias=True).training.training_loss,
                 scalers=_scalers,
                 data_indices=self.data_indices,
+                **extra_kwargs
                 ),
-            self.scalers
+            self.scalers,
+            extra_kwargs=self.field_shape if self.field_shape is not None else {}
             )
         
         self._scaling_values_log = self._mapper(
@@ -440,6 +447,38 @@ class BaseGraphModule(pl.LightningModule, ABC):
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
         )
+    
+    def _check_valid_field_shape(self, field_shape: tuple[int,int] | dict[str,tuple[int,int]] | None) -> None:
+        """Check that the provided field shape is valid.
+
+        Parameters
+        ----------
+        field_shape : tuple[int,int] | dict[str,tuple[int,int]]
+            Field shape to check
+
+        Returns
+        -------
+        None
+        """
+        if field_shape is None:
+            return
+
+        if self.dynamic_mode:
+            assert isinstance(field_shape, dict), (
+                f"In dynamic mode, field_shape must be a dict mapping domain labels to shapes. "
+                f"Got {type(field_shape)}."
+            )
+            for label, shape in field_shape.items():
+                assert (
+                    len(shape) == 2
+                ), f"Field shape for domain {label} must be a tuple of length 2. Got {shape}."
+        else:
+            assert isinstance(field_shape, tuple), (
+                f"In static mode, field_shape must be a tuple. Got {type(field_shape)}."
+            )
+            assert (
+                len(field_shape) == 2
+            ), f"Field shape must be a tuple of length 2. Got {field_shape}."
 
     def on_after_backward(self):
         """
@@ -510,7 +549,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
                     for label in _keys
             }
         else:
-            return fn(*_input, **kwargs)
+            extra_kwargs = kwargs.pop("extra_kwargs", {}) or {}
+            return fn(*_input, **(extra_kwargs if extra_kwargs else {}))
 
     def on_load_checkpoint(self, checkpoint: torch.nn.Module) -> None:
         self._ckpt_model_name_to_index = checkpoint["hyper_parameters"][
@@ -956,7 +996,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         train_loss, _, _ = self._step(batch)
         self.log(
-            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name + "_loss",
+            "train_" + self.loss[batch[1]].name + "_loss" if self.dynamic_mode else "train_" + self.loss.name + "_loss",
             train_loss,
             on_epoch=True,
             on_step=True,
@@ -1008,7 +1048,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
             val_loss, metrics, y_preds = self._step(batch, validation_mode=True)
 
         self.log(
-            "val_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name + "_loss",
+            f"val_{batch[1]}_" + self.loss[batch[1]].name + "_loss" if self.dynamic_mode else "val_" + self.loss.name + "_loss",
             val_loss,
             on_epoch=True,
             on_step=True,

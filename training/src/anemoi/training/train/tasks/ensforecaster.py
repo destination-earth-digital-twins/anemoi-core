@@ -43,6 +43,7 @@ class GraphEnsForecaster(BaseGraphModule):
         data_indices: dict,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -56,6 +57,9 @@ class GraphEnsForecaster(BaseGraphModule):
             Indices of the training data,
         metadata : dict
             Provenance information
+        field_shape : tuple[int, int] | dict[str, tuple[int, int]] | None | None
+            X,Y shape of the data fields. For None regular grid such as ERA5 and IFS 
+            this field shape is set None as field_shape has shape (NumGridPoints,)
         """
         super().__init__(
             config=config,
@@ -66,6 +70,7 @@ class GraphEnsForecaster(BaseGraphModule):
             data_indices=data_indices,
             metadata=metadata,
             supporting_arrays=supporting_arrays,
+            field_shape=field_shape,
         )
 
         self.rollout = config.training.rollout.start
@@ -163,6 +168,7 @@ class GraphEnsForecaster(BaseGraphModule):
         ens_comm_subgroup: ProcessGroup,
         model_comm_group: ProcessGroup,
         return_pred_ens: bool = False,
+        label: str = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Gather the ensemble members from all devices in my group.
 
@@ -474,7 +480,7 @@ class GraphEnsForecaster(BaseGraphModule):
             val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True)
         
         self.log(
-            "val_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
+            f"val_{batch[1]}_" + self.loss[batch[1]].name + "_loss" if self.dynamic_mode else "val_" + self.loss.name + "_loss",
             val_loss,
             on_epoch=True,
             on_step=True,
