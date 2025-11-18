@@ -406,20 +406,32 @@ class AnemoiTrainer:
     def metadata(self) -> dict:
         """Metadata and provenance information."""
         if self.dynamic_mode:
-            return {
-                    label: map_config_to_primitives({
+            # return {
+            #         label: map_config_to_primitives({
+            #         "version": "1.0",
+            #         "config": convert_to_omegaconf(self.config),
+            #         "seed": self.initial_seed,
+            #         "run_id": self.run_id,
+            #         "dataset": metadata,
+            #         "data_indices": self.datamodule.data_indices,
+            #         "provenance_training": gather_provenance_info(),
+            #         "timestamp": datetime.datetime.now(tz=datetime.timezone.utc),
+            #         }
+            #     )
+            #     for label, metadata in self.datamodule.metadata.items()
+            # }
+            return map_config_to_primitives(
+                {
                     "version": "1.0",
                     "config": convert_to_omegaconf(self.config),
                     "seed": self.initial_seed,
                     "run_id": self.run_id,
-                    "dataset": metadata,
+                    "dataset": {label: domain_metadata for label, domain_metadata in self.datamodule.metadata.items()},
                     "data_indices": self.datamodule.data_indices,
                     "provenance_training": gather_provenance_info(),
                     "timestamp": datetime.datetime.now(tz=datetime.timezone.utc),
-                    }
-                )
-                for label, metadata in self.datamodule.metadata.items()
-            }
+                },
+            )
         return map_config_to_primitives(
             {
                 "version": "1.0",

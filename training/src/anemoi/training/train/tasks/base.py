@@ -232,14 +232,24 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         # TODO: check this out, maybe we need a dict of metadata_extractor
         
+        # metadata_extractor = self._mapper(
+        #     lambda _metadata: ExtractVariableGroupAndLevel(
+        #         variable_groups=config.model_dump(
+        #             by_alias=True
+        #         ).training.variable_groups,
+        #         metadata_variables=_metadata if self.dynamic_mode else _metadata["dataset"].get("variables_metadata"),
+        #     ), {label : domain.get("variables_metadata") for label, domain in metadata.items()} if self.dynamic_mode else metadata 
+        # )
+
         metadata_extractor = self._mapper(
             lambda _metadata: ExtractVariableGroupAndLevel(
                 variable_groups=config.model_dump(
                     by_alias=True
                 ).training.variable_groups,
                 metadata_variables=_metadata if self.dynamic_mode else _metadata["dataset"].get("variables_metadata"),
-            ), {label : domain.get("variables_metadata") for label, domain in metadata.items()} if self.dynamic_mode else metadata 
+            ), {label : domain.get("variables_metadata") for label, domain in metadata["dataset"].items()} if self.dynamic_mode else metadata 
         )
+
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
         if self.dynamic_mode:
