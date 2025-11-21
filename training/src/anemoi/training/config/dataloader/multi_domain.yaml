@@ -63,6 +63,16 @@ regional_datasets: null
 training_periods: null 
 validation_periods: null 
 
+# hectometric data flag - by default set to False
+# When True, it indicates that the data is at hectometric resolution
+# ProcessConfig will handle any specific adjustments needed for hectometric data
+
+hectometric: false
+
+# training/validation datasets for hectometric data. Notice to use this hectometric Key needs to be set to True
+hectometric_dataset_training: null
+hectometric_validation_dataset: null
+
 # regional_dataset, training_periods and validation_periods is automatically 
 # injected to training/validation during runtime
 # resulting in training = {'region_1': {dataset: 'path/to/region_1_dataset.nc', start: START, end: END}, {'region_2': {'dataset' : 'path/to/region_2_dataset.nc', start: START, end: END}}
