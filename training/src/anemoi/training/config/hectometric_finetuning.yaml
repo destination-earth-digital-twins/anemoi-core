@@ -1,0 +1,211 @@
+defaults:
+- data: zarr
+- dataloader: multi_domain
+- datamodule: ens
+- diagnostics: evaluation
+- hardware: example
+- graph: multi_domain_stretched
+- model: graphtransformer_ens_multi_domain
+- training: multi_domain_ensemble_stretched
+- _self_
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+config_validation: False
+
+diagnostics:
+  log:
+    mlflow:
+      enabled: False
+      offline: True
+      authentication: True
+      tracking_uri: https://mlflow.ecmwf.int
+      experiment_name: 'multi-domain-experiments'
+      run_name: debug-aa-meps-refactor
+      system: True
+      max_params_length: 6000
+    interval: 10 #100
+    wandb:
+      entity: null
+  plot:
+    callbacks: []
+  checkpoint:
+    every_n_minutes:
+      save_frequency: 30
+      num_models_saved: 0
+    every_n_epochs:
+      save_frequency: 1
+      num_models_saved: -1
+
+data:
+  processors:
+    normalizer:
+      learnable: False
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+  diagnostic:
+  - "tp"
+  - "ssrd"
+  - "strd"
+  normalizer:
+    max:
+    - "z"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+    - "lcc"
+    - "mcc"
+    - "hcc"
+    - "tcc"
+
+hardware:
+  paths:
+    data: /leonardo_work/DestE_330_25/anemoi/datasets/
+    output: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/output/
+    graph: /leonardo_work/DestE_330_25/users/sbuurman/graphs/
+    warm_start: /leonardo_work/DestE_330_25/users/asalihi0/checkpoints/multi-domains-ens-first
+  files:
+    dataset: null
+    graph: null
+    warm_start: null
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: 8
+  num_gpus_per_ensemble: 16
+
+graph:
+  overwrite: True
+  nodes:
+    hidden:
+      node_builder:
+        lam_resolution: 12
+        global_resolution: 7
+        margin_radius_km: 11
+
+dataloader:
+  read_group_size: ${hardware.num_gpus_per_model}
+  batch_size:
+    training: 1
+    validation: 1
+    test: 1
+  num_workers:
+    training: 4
+    validation: 4
+    test: 1
+    predict: 1
+  limit_batches:
+    training: null
+    validation: null
+
+  # Have different folders for training and validation periods
+  # training:
+  #   Hecto:
+
+  # validation: 
+  #   Hecto:
+
+  # assume same dataset opening
+  # process configs will retreive the path of all hecto datasets
+  regional_datasets_train:
+    Hecto: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/anemoi-core/training/tests/test_hectometric/hectometric_training.txt
+  
+  regional_datasets_val:
+    Hecto: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/anemoi-core/training/tests/test_hectometric/hectometric_validation.txt
+
+  regional_datasets:
+    Hecto: /leonardo_work/DestE_330_25/anemoi/datasets/DEODE
+
+  dataset:
+    cutout:
+      - dataset: null
+      - concat:
+          - join:
+              - concat:
+                  - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+                    drop: [cp, slor, sdor, tcw, q_50, q_250, q_600, t_50, t_250, t_600, u_50, u_250, u_600, v_50, v_250, v_600, w_50, w_250, w_600, z_50, z_250, z_600]
+                    start: null
+                    end: 2022-12-31
+                    reorder: sort
+                  - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr
+                    start: 2023-01-01
+                    end: null
+                    drop: [cp, slor, sdor, tcw, q_50, q_250, q_600, t_50, t_250, t_600, u_50, u_250, u_600, v_50, v_250, v_600, w_50, w_250, w_600, z_50, z_250, z_600]
+                    reorder: sort
+              - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr
+                select: [lcc, mcc, hcc, tcc, strd, ssrd]
+            reorder: sort
+          - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/IFS/aifs-od-an-oper-0001-mars-n320-2024-2025-6h-v1.zarr
+            drop: [al, cp, latitude, longitude, q_250, q_50, q_600, sdor, slor, sr, stl1, swvl1, t_250, t_50, t_600, tcw, u_250, u_50, u_600, v_250, v_50, v_600, w_250, w_50, w_600, z_250, z_50, z_600]
+            reorder: sort
+    min_distance_km: 0
+    adjust: all
+    reorder: sort
+    statistics:
+      join:
+        - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+          drop: [cp, slor, sdor, tcw, q_50, q_250, q_600, t_50, t_250, t_600, u_50, u_250, u_600, v_50, v_250, v_600, w_50, w_250, w_600, z_50, z_250, z_600]
+          reorder: sort
+        - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr
+          select: [lcc, mcc, hcc, tcc, strd, ssrd]
+      adjust: ["start", "end"]
+      reorder: sort
+
+model:
+  dynamic_mode: True
+  num_channels: 1024
+  keep_batch_sharded: False # <-- for CRPS+FFT it is required
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+  bounding:
+    - _target_: anemoi.models.layers.bounding.ReluBounding #[0, infinity)
+      variables:
+      - tp
+      - ssrd
+      - strd
+    - _target_: anemoi.models.layers.bounding.HardtanhBounding #[min_val, max_val]
+      variables:
+      - tcc
+      - hcc
+      - mcc
+      - lcc
+      min_val: 0
+      max_val: 1
+
+training:
+  precision: bf16-mixed
+  run_id: null
+  fork_run_id: a9a0dcf197cc49d99ed0e1a4ab698d90 
+  transfer_learning: True
+  load_weights_only: True
+  max_epochs: null
+  max_steps: 15000 
+  lr:
+    rate: 3e-6
+    min: 3e-7 #3e-7
+    warmup: 1000
