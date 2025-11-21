@@ -81,6 +81,7 @@ training:
   dataset: ${dataloader.dataset}
   start: null
   end: null
+  frequency: ${data.frequency}
 
 validation_rollout: 1 # number of rollouts to use for validation, must be equal or greater than rollout expected by callbacks
 
@@ -88,6 +89,7 @@ validation:
   dataset: ${dataloader.dataset}
   start: null
   end: null
+  frequency: ${data.frequency}
 
 test:
   dataset: ${dataloader.dataset}
