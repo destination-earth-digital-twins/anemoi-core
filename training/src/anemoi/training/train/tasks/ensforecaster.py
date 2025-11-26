@@ -431,7 +431,7 @@ class GraphEnsForecaster(BaseGraphModule):
         train_loss, _, _, _ = self._step(batch)
 
         self.log(
-            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
+            f"train_{batch[1]}_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
             train_loss,
             on_epoch=True,
             on_step=True,
