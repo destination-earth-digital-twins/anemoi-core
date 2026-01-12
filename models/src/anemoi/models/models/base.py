@@ -20,6 +20,7 @@ from torch_geometric.data import HeteroData
 
 from anemoi.models.distributed.graph import gather_tensor
 from anemoi.models.distributed.graph import shard_tensor
+from anemoi.models.distributed.shapes import apply_shard_shapes
 from anemoi.models.distributed.shapes import get_shard_shapes
 from anemoi.models.layers.bounding import build_boundings
 from anemoi.models.layers.graph import NamedNodesAttributes
@@ -172,6 +173,7 @@ class BaseGraphModel(nn.Module):
         pre_processors: nn.Module,
         post_processors: nn.Module,
         multi_step: int,
+        graph_label: str = None,
         model_comm_group: Optional[ProcessGroup] = None,
         gather_out: bool = True,
         **kwargs,
@@ -185,6 +187,8 @@ class BaseGraphModel(nn.Module):
         ----------
         batch : torch.Tensor
             Input batched data (before pre-processing)
+        graph_label: str | None
+            Domain label (Optional). 
         pre_processors : nn.Module,
             Pre-processing module
         post_processors : nn.Module,
@@ -218,17 +222,17 @@ class BaseGraphModel(nn.Module):
                 shard_shapes = get_shard_shapes(x, -2, model_comm_group=model_comm_group)
                 grid_shard_shapes = [shape[-2] for shape in shard_shapes]
                 x = shard_tensor(x, -2, shard_shapes, model_comm_group)
-
+            
             x = pre_processors(x, in_place=False)
-
             # Perform forward pass
-            y_hat = self.forward(x, model_comm_group=model_comm_group, grid_shard_shapes=grid_shard_shapes, **kwargs)
+            y_hat = self.forward(x, graph_label, model_comm_group=model_comm_group, grid_shard_shapes=grid_shard_shapes, **kwargs)
 
             # Apply post-processing
             y_hat = post_processors(y_hat, in_place=False)
 
             # Gather output if needed
             if gather_out and model_comm_group is not None:
-                y_hat = gather_tensor(y_hat, -2, self.truncation(y_hat, -2, grid_shard_shapes), model_comm_group)
+                y_hat_shard_shapes = apply_shard_shapes(y_hat, -2, grid_shard_shapes)
+                y_hat = gather_tensor(y_hat, -2, y_hat_shard_shapes, model_comm_group)
 
         return y_hat
