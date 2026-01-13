@@ -1,0 +1,95 @@
+# Stretched grid graph config intended to be used with a cutout dataset.
+# Adjusted for DE330 data
+
+# Defining the names of the data and hidden mesh
+data: "data" 
+hidden: "hidden"
+
+# Define the anemoi-dataset configuration for the input data
+nodes:
+  data:
+    node_builder:
+      _target_: anemoi.graphs.nodes.ZarrDatasetNodes
+      dataset: 
+        cutout:
+        - dataset: /pfs/lustrep4/scratch/project_465000527/dschonac/DE330_ARCHIVE/zarr/de330_2025061600_2025061800_1h_ALARO_500m_storm3_v2.zarr/de330_ALARO_500m_storm3_2025061600_2025061800-1h-v2.zarr
+        - dataset: /pfs/lustrep4/scratch/project_465000527/multi-domain/IFS-oper/aifs-od-an-oper-0001-mars-n320-20250616Z00-20250618Z00-6h-DE330-v1.zarr
+        adjust: all
+        # variables and statistics do not matter for the graph generation but adding them anyways
+        statistics: /pfs/lustrep4/scratch/project_465000527/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr
+        drop: ['u_50', 'u_250', 'v_50', 'v_250', 'z_50', 'z_250', 't_50', 't_250', 'q_50', 'q_250', 'w_50', 'w_250']
+        min_distance_km: 20
+    attributes: 
+      area_weight:
+        _target_: anemoi.graphs.nodes.attributes.SphericalAreaWeights
+        norm: unit-max
+      cutout:
+        _target_: anemoi.graphs.nodes.attributes.CutOutMask
+  #Defining the hidden mesh as a stretched grid
+  hidden:
+    node_builder:
+      _target_: anemoi.graphs.nodes.StretchedTriNodes # Stretched grid class
+      lam_resolution: 10
+      global_resolution: 7
+      reference_node_name: "data"
+      mask_attr_name: cutout
+      margin_radius_km: 11
+
+# Defining the enc-proc-dec
+edges:
+# Encoder
+  - source_name: "data"
+    target_name: "hidden"
+    edge_builders:
+    - _target_: anemoi.graphs.edges.KNNEdges
+      num_nearest_neighbours: 12 # nearest neighbours in the encoder
+    attributes: 
+      edge_length:
+        _target_: anemoi.graphs.edges.attributes.EdgeLength
+        norm: unit-max
+      edge_dirs:
+        _target_: anemoi.graphs.edges.attributes.EdgeDirection
+        norm: unit-std
+  # Processor
+  - source_name: "hidden"
+    target_name: "hidden"
+    edge_builders:
+    - _target_: anemoi.graphs.edges.MultiScaleEdges
+      x_hops: 1
+    attributes: 
+      edge_length:
+        _target_: anemoi.graphs.edges.attributes.EdgeLength
+        norm: unit-max
+      edge_dirs:
+        _target_: anemoi.graphs.edges.attributes.EdgeDirection
+        norm: unit-std
+  # Decoder
+  - source_name: "hidden"
+    target_name: "data"
+    edge_builders:
+    - _target_: anemoi.graphs.edges.KNNEdges
+      num_nearest_neighbours: 3 # nearest neighbours in the decoder
+    attributes: 
+      edge_length:
+        _target_: anemoi.graphs.edges.attributes.EdgeLength
+        norm: unit-max
+      edge_dirs:
+        _target_: anemoi.graphs.edges.attributes.EdgeDirection
+        norm: unit-std
+
+attributes:
+  nodes:
+    # Attributes for data nodes
+    # Weighting by area is defined for the loss function
+    area_weight:
+      _target_: anemoi.graphs.nodes.attributes.SphericalAreaWeights
+      norm: unit-max
+    cutout:
+      _target_: anemoi.graphs.nodes.attributes.CutOutMask
+  edges:
+    edge_length:
+      _target_: anemoi.graphs.edges.attributes.EdgeLength
+      norm: unit-max
+    edge_dirs:
+      _target_: anemoi.graphs.edges.attributes.EdgeDirection
+      norm: unit-std

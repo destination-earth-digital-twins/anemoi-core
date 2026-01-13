@@ -136,7 +136,6 @@ class CombinedLoss(BaseLoss):
 
             self.add_module(str(i), self.losses[-1])  # (self.losses[-1].name + str(i), self.losses[-1])
         self.loss_weights = loss_weights
-        del self.scaler  # Remove scaler property from parent class, as it is not used here
 
     def forward(
         self,

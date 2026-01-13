@@ -60,6 +60,21 @@ class BaseGridIndices(ABC):
     @abstractmethod
     def get_shard_indices(self, reader_group_rank: int) -> ArrayIndex: ...
 
+class GraphIndependentGrid(BaseGridIndices):
+    """Grid is independent of the graph structure."""
+
+    def __init__(self, nodes_name: str, reader_group_size: int, grid_size: int):
+        super().__init__(nodes_name, reader_group_size)
+        self.grid_size = grid_size
+
+    def compute_grid_size(self) -> int:
+        return self.grid_size
+
+    def get_shard_indices(self, reader_group_rank: int) -> ArrayIndex:
+        return self.get_shard_slice(reader_group_rank)
+
+    def setup(self) -> None:
+        self.grid_size = self.compute_grid_size()
 
 class FullGrid(BaseGridIndices):
     """The full grid is loaded."""

@@ -43,6 +43,7 @@ class GraphEnsForecaster(BaseGraphModule):
         data_indices: dict,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -66,6 +67,7 @@ class GraphEnsForecaster(BaseGraphModule):
             data_indices=data_indices,
             metadata=metadata,
             supporting_arrays=supporting_arrays,
+            field_shape=field_shape,
         )
 
         self.rollout = config.training.rollout.start
@@ -246,7 +248,7 @@ class GraphEnsForecaster(BaseGraphModule):
     def _normalize_batch(self, batch: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
         """Normalize batch for training and validation before every step.
 
-        For the GraphEnsForecaster, the batch is a tuple were we need to normalize
+        For the GraphEnsForecaster, the batch is a tuple where we need to normalize
         the batch for the ensemble members and the EDA initial conditions.
 
         Parameters
@@ -425,7 +427,7 @@ class GraphEnsForecaster(BaseGraphModule):
         train_loss, _, _, _ = self._step(batch)
 
         self.log(
-            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
+            f"train_{batch[1]}_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
             train_loss,
             on_epoch=True,
             on_step=True,
@@ -474,7 +476,7 @@ class GraphEnsForecaster(BaseGraphModule):
             val_loss, metrics, y_preds, ens_ic = self._step(batch, validation_mode=True)
         
         self.log(
-            "val_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name,
+            f"val_{batch[1]}_" + self.loss[batch[1]].name + "_loss" if self.dynamic_mode else "val_" + self.loss.name + "_loss",
             val_loss,
             on_epoch=True,
             on_step=True,

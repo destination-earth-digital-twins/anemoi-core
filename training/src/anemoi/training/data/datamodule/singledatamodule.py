@@ -34,15 +34,13 @@ LOGGER = logging.getLogger(__name__)
 class AnemoiDatasetsDataModule(pl.LightningDataModule):
     """Anemoi Datasets data module for PyTorch Lightning."""
 
-    def __init__(self, config: BaseSchema, graph_data: dict[HeteroData] | HeteroData) -> None:
+    def __init__(self, config: BaseSchema) -> None:
         """Initialize Anemoi Datasets data module.
 
         Parameters
         ----------
         config : BaseSchema
             Job configuration
-        graph_data: HeteroData
-            graph and its information 
 
 
         """
@@ -51,8 +49,6 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
         self.config = config
         self.dynamic_mode = self.config.model.dynamic_mode
-        self.graph_data = graph_data
-
         # Set the training end date if not specified
         if self.dynamic_mode:
             resolved_training_conf = OmegaConf.to_container(self.config.dataloader.training, resolve = True)
@@ -89,13 +85,26 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
     @cached_property
     def supporting_arrays(self) -> dict | dict[str, dict]:
+        return self.ds_train.supporting_arrays
+    
+    @cached_property
+    def field_shapes(self) -> tuple | dict[str, tuple] | None:
         if self.dynamic_mode:
+            LOGGER.info("Dynamic mode enabled. Creating a dictonary of field shape:")
             return {
-                domain : _data | self.grid_indices[domain].supporting_arrays
-                for domain, _data in self.ds_train.supporting_arrays.items()
+                domain : {"field_shape" : _data.field_shape} for domain, _data in self.ds_train.data.items()
             }
-        return self.ds_train.supporting_arrays | self.grid_indices.supporting_arrays
 
+        _field_shape = self.ds_train.data.field_shape
+        LOGGER.info("Field shape: %s", _field_shape)
+        if len(_field_shape)==1:
+            LOGGER.warning(
+                "Field shape has only one dimension, is this expected? %s . Returning None",
+                _field_shape,
+            )
+            return None
+        return {"field_shape" : _field_shape}
+    
     @cached_property
     def data_indices(self) -> IndexCollection:
         return IndexCollection(self.config, self.ds_train.name_to_index)
@@ -172,42 +181,42 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
         )
         return data_reader
 
-    @cached_property
-    def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
-        """
-        Creates grid_indices object for a given graph structure.
-        Notice when dynamic_mode is enabled, multiple grid_indices
-        object is created per label and graph.
+    # @cached_property
+    # def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
+    #     """
+    #     Creates grid_indices object for a given graph structure.
+    #     Notice when dynamic_mode is enabled, multiple grid_indices
+    #     object is created per label and graph.
 
-        args:
-            None
-        return:
-            grid_indices object | dict of grid_indices objects
+    #     args:
+    #         None
+    #     return:
+    #         grid_indices object | dict of grid_indices objects
 
-        """
-        reader_group_size = self.config.dataloader.read_group_size
+    #     """
+    #     reader_group_size = self.config.dataloader.read_group_size
 
-        if self.dynamic_mode:
-            grid_indices_dict = {}
-            for graph_label, graph in self.graph_data.items():
-                # I think we may need to create an grid_indices object
-                # per label. TODO: Investigate this
+    #     if self.dynamic_mode:
+    #         grid_indices_dict = {}
+    #         for graph_label, graph in self.graph_data.items():
+    #             # I think we may need to create an grid_indices object
+    #             # per label. TODO: Investigate this
 
-                grid_indices = instantiate(
-                    self.config.dataloader.grid_indices,
-                    reader_group_size=reader_group_size,
-                )
-                grid_indices.setup(graph)
-                grid_indices_dict[graph_label] = grid_indices
+    #             grid_indices = instantiate(
+    #                 self.config.dataloader.grid_indices,
+    #                 reader_group_size=reader_group_size,
+    #             )
+    #             grid_indices.setup(graph)
+    #             grid_indices_dict[graph_label] = grid_indices
             
-            return grid_indices_dict
-        else:
-            grid_indices = instantiate(
-                self.config.dataloader.grid_indices,
-                reader_group_size=reader_group_size,
-            )
-            grid_indices.setup(self.graph_data)
-            return grid_indices
+    #         return grid_indices_dict
+    #     else:
+    #         grid_indices = instantiate(
+    #             self.config.dataloader.grid_indices,
+    #             reader_group_size=reader_group_size,
+    #         )
+    #         grid_indices.setup(self.graph_data)
+    #         return grid_indices
 
     @cached_property
     def timeincrement(self) -> int:
@@ -301,7 +310,6 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
             relative_date_indices=self.relative_date_indices(val_rollout),
             timestep=self.config.data.timestep,
             shuffle=shuffle,
-            grid_indices=self.grid_indices,
             label=label,
             dynamic_mode=self.dynamic_mode,
         )

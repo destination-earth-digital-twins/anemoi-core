@@ -42,6 +42,7 @@ class GraphForecaster(BaseGraphModule):
         data_indices: IndexCollection,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -70,6 +71,8 @@ class GraphForecaster(BaseGraphModule):
             data_indices=data_indices,
             metadata=metadata,
             supporting_arrays=supporting_arrays,
+            field_shape=None, # <-- only needed for FFT loss in ens mode
+            # TODO: check if we could implement FFT for non-crps loss
         )
 
         self.rollout = config.training.rollout.start

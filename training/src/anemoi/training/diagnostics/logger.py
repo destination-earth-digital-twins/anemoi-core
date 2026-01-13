@@ -92,6 +92,8 @@ def get_mlflow_logger(config: BaseSchema) -> None:
     )
 
     if config.diagnostics.log.mlflow.terminal:
+        print("Logging terminal output to MLFlow.")
+        print("output directory:", config.hardware.paths.plots)
         logger.log_terminal_output(artifact_save_dir=config.hardware.paths.plots)
     if config.diagnostics.log.mlflow.system:
         logger.log_system_metrics()

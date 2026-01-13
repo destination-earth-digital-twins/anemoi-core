@@ -141,6 +141,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         data_indices: IndexCollection,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -158,6 +159,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
             Provenance information
         supporting_arrays : dict
             Supporting NumPy arrays to store in the checkpoint
+        field_shape : tuple[int, int] | dict[str, tuple[int, int]]
+            x,y shape of the data fields
 
         """
         super().__init__()
@@ -208,8 +211,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
             truncation_data=truncation_data,
             config=convert_to_omegaconf(config),
         )
+        self.dataset_labels = graph_data.keys() if self.dynamic_mode else None
         self.config = config
         self.data_indices = data_indices
+        self._check_valid_field_shape
+        self.field_shape = field_shape
 
         self.save_hyperparameters()
         
@@ -233,19 +239,20 @@ class BaseGraphModule(pl.LightningModule, ABC):
                     by_alias=True
                 ).training.variable_groups,
                 metadata_variables=_metadata if self.dynamic_mode else _metadata["dataset"].get("variables_metadata"),
-            ), {label : domain.get("variables_metadata") for label, domain in metadata.items()} if self.dynamic_mode else metadata 
+            ), {label : domain.get("variables_metadata") for label, domain in metadata["dataset"].items()} if self.dynamic_mode else metadata 
         )
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
         if self.dynamic_mode:
-            per_domain_weight_frac_of_total = OmegaConf.to_container(
-                getattr(
+            domain_weights = getattr(
                     config.model_dump(by_alias=True).training,
                     "per_domain_weight_frac_of_total",
                     {}
-                ),
-                resolve=True
-            )
+                )
+            if isinstance(domain_weights, float):
+                per_domain_weight_frac_of_total = {label: {"weight_frac_of_total": domain_weights} for label in self.dataset_labels}
+            else:
+                per_domain_weight_frac_of_total = OmegaConf.to_container(domain_weights, resolve=True)
 
             msg = (
                 f"In dynamic mode, per_domain_weight_frac_of_total must be provided"
@@ -279,6 +286,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 label: _value[0]
                 for label, _value in self.scalers_and_updating_scalars.items()
             }
+
             self.updating_scalars ={
                 label: _value[1]
                 for label, _value in self.scalers_and_updating_scalars.items()
@@ -298,12 +306,14 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         # do we need N losses? where N is number of graphs/domain.
         self.loss = self._mapper(
-            lambda _scalers : get_loss_function(
+            lambda _scalers, **extra_kwargs : get_loss_function(
                 config.model_dump(by_alias=True).training.training_loss,
                 scalers=_scalers,
                 data_indices=self.data_indices,
+                **extra_kwargs
                 ),
-            self.scalers
+            self.scalers,
+            extra_kwargs=self.field_shape if self.field_shape is not None else {}
             )
         
         self._scaling_values_log = self._mapper(
@@ -440,6 +450,35 @@ class BaseGraphModule(pl.LightningModule, ABC):
             model_comm_group=self.model_comm_group,
             grid_shard_shapes=self.grid_shard_shapes,
         )
+    def _check_valid_field_shape(self, field_shape: tuple[int,int] | dict[str,tuple[int,int]] | None) -> None:
+        """Check that the provided field shape is valid.
+        Parameters
+        ----------
+        field_shape : tuple[int,int] | dict[str,tuple[int,int]]
+            Field shape to check
+        Returns
+        -------
+        None
+        """
+        if field_shape is None:
+            return
+
+        if self.dynamic_mode:
+            assert isinstance(field_shape, dict), (
+                f"In dynamic mode, field_shape must be a dict mapping domain labels to shapes. "
+                f"Got {type(field_shape)}."
+            )
+            for label, shape in field_shape.items():
+                assert (
+                    len(shape) == 2
+                ), f"Field shape for domain {label} must be a tuple of length 2. Got {shape}."
+        else:
+            assert isinstance(field_shape, tuple), (
+                f"In static mode, field_shape must be a tuple. Got {type(field_shape)}."
+            )
+            assert (
+                len(field_shape) == 2
+            ), f"Field shape must be a tuple of length 2. Got {field_shape}."
 
     def on_after_backward(self):
         """
@@ -502,7 +541,6 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 )
 
             extra_kwargs = kwargs.get("extra_kwargs", {}) or {}
-
             return {label: fn(
                     *[obj[label] if isinstance(obj,dict) and label in obj else obj for obj in _input],
                     **(extra_kwargs.get(label, {}) if extra_kwargs else {})
@@ -510,7 +548,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
                     for label in _keys
             }
         else:
-            return fn(*_input, **kwargs)
+            extra_kwargs = kwargs.pop("extra_kwargs", {}) or {}
+            return fn(*_input, **(extra_kwargs if extra_kwargs else {}))
 
     def on_load_checkpoint(self, checkpoint: torch.nn.Module) -> None:
         self._ckpt_model_name_to_index = checkpoint["hyper_parameters"][
@@ -956,7 +995,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         train_loss, _, _ = self._step(batch)
         self.log(
-            "train_" + self.loss[batch[1]].name if self.dynamic_mode else self.loss.name + "_loss",
+            "train_" + self.loss[batch[1]].name + "_loss" if self.dynamic_mode else "train_" + self.loss.name + "_loss",
             train_loss,
             on_epoch=True,
             on_step=True,

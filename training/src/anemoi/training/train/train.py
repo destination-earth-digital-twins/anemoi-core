@@ -68,7 +68,7 @@ class AnemoiTrainer:
         ), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
         if config.model.dynamic_mode:
             LOGGER.info("Dynamic mode enabled.")
-            hectometric = getattr(self.config.dataloader, "hectometric", False)
+            hectometric = getattr(config.dataloader, "hectometric", False)
             config = self.get_processed_configs(config, hectometric=hectometric)
 
         if config.config_validation:
@@ -109,7 +109,7 @@ class AnemoiTrainer:
         # Check for dry run, i.e. run id without data
         self._log_information()
 
-    def get_processed_configs(self, config) -> DictConfig:
+    def get_processed_configs(self, config, hectometric = False) -> DictConfig:
         """
         Enable processing of multiple entries for different regions.
 
@@ -144,7 +144,7 @@ class AnemoiTrainer:
         """
         from anemoi.training.utils.process_configs import ProcessConfigs
 
-        pc = ProcessConfigs(base_config=config)
+        pc = ProcessConfigs(base_config=config, hectometric=hectometric)
         pc.process
         return pc.update()
 
@@ -266,6 +266,7 @@ class AnemoiTrainer:
             "statistics": self.datamodule.statistics,
             "statistics_tendencies": self.datamodule.statistics_tendencies,
             "supporting_arrays": self.supporting_arrays,
+            "field_shape": self.datamodule.field_shapes
         }
 
         model_task = get_class(self.config.training.model_task)
@@ -413,21 +414,19 @@ class AnemoiTrainer:
     def metadata(self) -> dict:
         """Metadata and provenance information."""
         if self.dynamic_mode:
-            return {
-                label: map_config_to_primitives(
+            return map_config_to_primitives(
                     {
                         "version": "1.0",
                         "config": convert_to_omegaconf(self.config),
                         "seed": self.initial_seed,
                         "run_id": self.run_id,
-                        "dataset": metadata,
+                        "dataset": {label: domain_metadata for label, domain_metadata in self.datamodule.metadata.items()},
                         "data_indices": self.datamodule.data_indices,
                         "provenance_training": gather_provenance_info(),
                         "timestamp": datetime.datetime.now(tz=datetime.timezone.utc),
                     }
                 )
-                for label, metadata in self.datamodule.metadata.items()
-            }
+
         return map_config_to_primitives(
             {
                 "version": "1.0",

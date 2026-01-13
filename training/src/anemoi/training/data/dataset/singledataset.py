@@ -22,6 +22,7 @@ from torch.utils.data import IterableDataset
 from anemoi.training.data.grid_indices import BaseGridIndices
 from anemoi.training.utils.seeding import get_base_seed
 from anemoi.training.utils.usable_indices import get_usable_indices
+from hydra.utils import instantiate
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +33,6 @@ class NativeGridDataset(IterableDataset):
     def __init__(
         self,
         data_reader: Callable | dict[Callable],
-        grid_indices: type[BaseGridIndices] | dict[type[BaseGridIndices]],
         relative_date_indices: list,
         timestep: str = "6h",
         shuffle: bool = True,
@@ -66,7 +66,6 @@ class NativeGridDataset(IterableDataset):
         self.dynamic_mode = dynamic_mode
 
         self.timestep = timestep
-        self.grid_indices = grid_indices
 
         # lazy init
         self.n_samples_per_epoch_total: int = 0
@@ -102,9 +101,51 @@ class NativeGridDataset(IterableDataset):
         else:
             self.ensemble_dim: int = 2
             self.ensemble_size = self.data.shape[self.ensemble_dim]
+        
+        # grid dimensions
+        if self.dynamic_mode:
+            self.grid_dim: int = 3
+            self.grid_size = {domain: _data.shape[self.grid_dim] for domain, _data in self.data.items()}
+        else:
+            self.grid_dim: int = 3
+            self.grid_size = self.data.shape[self.grid_dim]
+    
+    @cached_property
 
+    def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
+        """
+        Creates grid_indices object for a given graph structure.
+        Notice when dynamic_mode is enabled, multiple grid_indices
+        object is created per label and graph.
 
+        args:
+            None
+        return:
+            grid_indices object | dict of grid_indices objects
 
+        """
+        reader_group_size = self.config.dataloader.read_group_size
+
+        if self.dynamic_mode:
+            grid_indices_dict = {}
+            for domain, dataset_config in self.config.dataloader.training:
+
+                grid_indices = instantiate(
+                    self.config.dataloader.grid_indices,
+                    reader_group_size=reader_group_size,
+                    self.grid_size[domain],
+                )
+                grid_indices.setup()
+                grid_indices_dict[domain] = grid_indices
+            
+            return grid_indices_dict
+        else:
+            grid_indices = instantiate(
+                self.config.dataloader.grid_indices,
+                reader_group_size=reader_group_size,
+            )
+            grid_indices.setup(self.graph_data)
+            return grid_indices
 
     @cached_property
     def statistics(self) -> dict[dict] | dict:
@@ -170,9 +211,12 @@ class NativeGridDataset(IterableDataset):
         """Return dataset supporting_arrays."""
         if self.dynamic_mode:
             return {
-                label : domain.supporting_arrays() for label, domain in self.data.items()
+                domain : _data | self.grid_indices[domain].supporting_arrays
+                for domain, _data in self.supporting_arrays.items()
+            } | {
+                label : domain.supporting_arrays() for label, domain in self.data.supporting_arrays.items()
             }
-        return self.data.supporting_arrays()
+        return self.data.supporting_arrays() | self.grid_indices.supporting_arrays
 
     @cached_property
     def name_to_index(self) -> dict:

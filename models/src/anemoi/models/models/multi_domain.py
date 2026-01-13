@@ -453,6 +453,11 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
 
         graph = self._graph_data[graph_label]
         graph.to(x.device)
+        # graph = torch.load(
+        #         self._graph_data[graph_label],
+        #         map_location=x.device,
+        #         weights_only=False,
+        #     )
         self.current_graph_label = graph_label
 
 

@@ -1,0 +1,208 @@
+defaults:
+- data: zarr
+- dataloader: multi_domain
+- datamodule: single
+- diagnostics: evaluation
+- hardware: slurm
+- graph: multi_domain_stretched
+- model: graphtransformer_multi_domain
+- training: multi_domain_stretched
+- _self_
+#- override hydra/hydra_logging: disabled
+- override hydra/job_logging: disabled
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+config_validation: False
+
+diagnostics:
+  defaults:
+  - plot: simple
+  - callbacks: placeholder
+  - benchmark_profiler: simple
+  log:
+    mlflow:
+      enabled: True
+      offline: True
+      authentication: True
+      tracking_uri: https://mlflow.ecmwf.int
+      experiment_name: 'multi-domain-experiments'
+      run_name: debug-aa-meps-refactor
+      system: True
+      max_params_length: 6000
+    interval: 10 #100
+    wandb:
+      entity: null
+  plot:
+    callbacks: []
+  checkpoint:
+    every_n_minutes:
+      save_frequency: 30
+      num_models_saved: 0
+    every_n_epochs:
+      save_frequency: 1
+      num_models_saved: -1
+
+
+data:
+  resolution: None
+  forcing:
+  - "cos_latitude"
+  - "cos_longitude"
+  - "sin_latitude"
+  - "sin_longitude"
+  - "cos_julian_day"
+  - "cos_local_time"
+  - "sin_julian_day"
+  - "sin_local_time"
+  - "insolation"
+  - "lsm"
+  - "z"
+
+  diagnostic:
+  - "tp"
+  - "strd"
+  - "ssrd"
+
+  normalizer:
+    max:
+    - "z"
+    std: 
+    - "tp"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+    - "lcc"
+    - "mcc"
+    - "hcc"
+    - "tcc"
+
+
+hardware:
+  paths:
+    warm_start: /leonardo_work/DestE_330_25/users/sbuurman/checkpoints/refactor_stage_b/
+    data: /leonardo_work/DestE_330_25/anemoi/datasets/
+    output: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/output/
+    graph: /leonardo_work/DestE_330_25/users/sbuurman/graphs/
+  files:
+    warm_start: last.ckpt
+    dataset: null
+    graph: null
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_model: 4
+
+graph:
+  overwrite: False
+  clobber: False
+
+dataloader:
+  batch_size:
+    training: 1
+    validation: 1
+    test: 1
+  num_workers:
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+  limit_batches:
+    training: null
+    validation: null
+
+  training_periods:
+    MEPS: # Stretched-grid
+      start: 2020-02-05 #oper-ea-an-2016-2023
+      end: 2023-05-30 #2022-05-31
+    AA: # Stretched-grid
+      start: 2022-01-01 #oper-ea-an-2016-2023
+      end: 2025-05-31
+
+  validation_periods:
+    MEPS:
+      start: 2023-05-30
+      end: 2023-05-31
+    AA:
+      start: 2025-06-01
+      end: 2025-12-31
+
+  regional_datasets:
+    MEPS: 
+      dataset: ${hardware.paths.data}/MEPS/aifs-meps-2.5km-2020-2023-6h-v7.zarr
+      trim_edge: 50
+      drop: ['10fg', '10si', 'cbh', 'fog', 'vis']
+    AA:
+      dataset: ${hardware.paths.data}/AROME-ARCTIC/arome_arctic-2.5km-2022-2025-6h-v4.zarr
+      trim_edge: 50
+      drop: ['10fg', '10si', 'cbh', 'fog', 'vis']
+  dataset:
+    cutout:
+      - dataset: null
+        trim_edge: null
+        drop: null
+      - concat:
+          - join:
+            - dataset: ${hardware.paths.data}/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v8.zarr
+            - dataset: ${hardware.paths.data}/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr 
+            start: 1979-01-01
+            end: 2023-12-31
+            drop: ["sdor","slor","cp", "u_600","v_600","z_600","t_600", "q_600", "w_600", 'rsn','tvl','swvl3','anor','lai_hv','100u','cl','stl3','tvh','ro','100v','swvl2','cvh','tsn','isor','slt','lsp','sd','stl2','sf','cvl','lai_lv']
+            reorder: sort
+          - dataset: ${hardware.paths.data}/IFS/aifs-od-an-oper-0001-mars-n320-2024-2025-6h-v1.zarr
+            start: 2024-01-01
+            end: 2025-12-31
+            drop: ["sdor","slor","cp", "u_600",  "v_600","z_600","t_600", "q_600", "w_600",'al', 'longitude', 'latitude', 'sr']   
+            reorder: sort
+        reorder: sort
+    adjust: all 
+    reorder: {'10u': 0, '10v': 1, '2d': 2, '2t': 3, 'cos_julian_day': 4, 'cos_latitude': 5, 'cos_local_time': 6, 'cos_longitude': 7, 'hcc': 8, 'insolation': 9, 'lcc': 10, 'lsm': 11, 'mcc': 12, 'msl': 13, 'q_100': 14, 'q_1000': 15, 'q_150': 16, 'q_200': 17, 'q_250': 18, 'q_300': 19, 'q_400': 20, 'q_50': 21, 'q_500': 22, 'q_700': 23, 'q_850': 24, 'q_925': 25, 'sin_julian_day': 26, 'sin_latitude': 27, 'sin_local_time': 28, 'sin_longitude': 29, 'skt': 30, 'sp': 31, 'ssrd': 32, 'strd': 33, 't_100': 34, 't_1000': 35, 't_150': 36, 't_200': 37, 't_250': 38, 't_300': 39, 't_400': 40, 't_50': 41, 't_500': 42, 't_700': 43, 't_850': 44, 't_925': 45, 'tcc': 46, 'tcw': 47, 'tp': 48, 'u_100': 49, 'u_1000': 50, 'u_150': 51, 'u_200': 52, 'u_250': 53, 'u_300': 54, 'u_400': 55, 'u_50': 56, 'u_500': 57, 'u_700': 58, 'u_850': 59, 'u_925': 60, 'v_100': 61, 'v_1000': 62, 'v_150': 63, 'v_200': 64, 'v_250': 65, 'v_300': 66, 'v_400': 67, 'v_50': 68, 'v_500': 69, 'v_700': 70, 'v_850': 71, 'v_925': 72, 'w_100': 73, 'w_1000': 74, 'w_150': 75, 'w_200': 76, 'w_250': 77, 'w_300': 78, 'w_400': 79, 'w_50': 80, 'w_500': 81, 'w_700': 82, 'w_850': 83, 'w_925': 84, 'z': 85, 'z_100': 86, 'z_1000': 87, 'z_150': 88, 'z_200': 89, 'z_250': 90, 'z_300': 91, 'z_400': 92, 'z_50': 93, 'z_500': 94, 'z_700': 95, 'z_850': 96, 'z_925': 97}
+    statistics: 
+      - dataset: ${hardware.paths.data}/MEPS/aifs-meps-2.5km-2020-2023-6h-v7.zarr
+    # reorder: {'10u': 0, '10v': 1, '2d': 2, '2t': 3, 'cos_julian_day': 4, 'cos_latitude': 5, 'cos_local_time': 6, 'cos_longitude': 7, 'hcc': 8, 'insolation': 9, 'lcc': 10, 'lsm': 11, 'mcc': 12, 'msl': 13, 'q_100': 14, 'q_1000': 15, 'q_150': 16, 'q_200': 17, 'q_250': 18, 'q_300': 19, 'q_400': 20, 'q_50': 21, 'q_500': 22, 'q_700': 23, 'q_850': 24, 'q_925': 25, 'sin_julian_day': 26, 'sin_latitude': 27, 'sin_local_time': 28, 'sin_longitude': 29, 'skt': 30, 'sp': 31, 'ssrd': 32, 'strd': 33, 't_100': 34, 't_1000': 35, 't_150': 36, 't_200': 37, 't_250': 38, 't_300': 39, 't_400': 40, 't_50': 41, 't_500': 42, 't_700': 43, 't_850': 44, 't_925': 45, 'tcc': 46, 'tcw': 47, 'tp': 48, 'u_100': 49, 'u_1000': 50, 'u_150': 51, 'u_200': 52, 'u_250': 53, 'u_300': 54, 'u_400': 55, 'u_50': 56, 'u_500': 57, 'u_700': 58, 'u_850': 59, 'u_925': 60, 'v_100': 61, 'v_1000': 62, 'v_150': 63, 'v_200': 64, 'v_250': 65, 'v_300': 66, 'v_400': 67, 'v_50': 68, 'v_500': 69, 'v_700': 70, 'v_850': 71, 'v_925': 72, 'w_100': 73, 'w_1000': 74, 'w_150': 75, 'w_200': 76, 'w_250': 77, 'w_300': 78, 'w_400': 79, 'w_50': 80, 'w_500': 81, 'w_700': 82, 'w_850': 83, 'w_925': 84, 'z': 85, 'z_100': 86, 'z_1000': 87, 'z_150': 88, 'z_200': 89, 'z_250': 90, 'z_300': 91, 'z_400': 92, 'z_50': 93, 'z_500': 94, 'z_700': 95, 'z_850': 96, 'z_925': 97}
+
+model:
+  keep_batch_sharded: False
+  dynamic_mode: True
+  num_channels: 1024
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+
+  bounding:
+    - _target_: anemoi.models.layers.bounding.ReluBounding #[0, infinity)
+      variables:
+      - tp
+    - _target_: anemoi.models.layers.bounding.HardtanhBounding #[min_val, max_val]
+      variables:
+      - tcc
+      - hcc
+      - mcc
+      - lcc
+      min_val: 0
+      max_val: 1
+
+training:
+  run_id: null
+  fork_run_id: null 
+  transfer_learning: True
+  load_weights_only: True
+  max_epochs: null
+  max_steps: 10000
+  lr:
+    rate: 6e-06
+    min: 3e-7 #3e-7
+    warmup: 1000

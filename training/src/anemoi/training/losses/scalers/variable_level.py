@@ -85,7 +85,7 @@ class BaseVariableLevelScaler(BaseVariableLossScaler):
 
         for variable_name, idx in self.data_indices.model.output.name_to_index.items():
             variable_group, _, variable_level = self.variable_metadata_extractor.get_group_and_level(variable_name)
-            if variable_group != self.scaling_group:
+            if variable_group != self.scaling_group or variable_name == "skt":
                 continue
             # Apply variable level scaling
             assert variable_level is not None, f"Variable {variable_name} has no level to scale."

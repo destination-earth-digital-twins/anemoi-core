@@ -7,12 +7,13 @@
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
 
-
+import logging
 from abc import ABC
 from abc import abstractmethod
 
 from torch_geometric.data.storage import NodeStorage
 
+LOGGER = logging.getLogger(__name__)
 
 class BaseIcosahedronEdgeStrategy(ABC):
     """Abstract base class for different edge-building strategies."""
@@ -27,12 +28,28 @@ class TriNodesEdgeBuilder(BaseIcosahedronEdgeStrategy):
     def add_edges(self, nodes: NodeStorage, x_hops: int, scale_resolutions: list[int]) -> NodeStorage:
         from anemoi.graphs.generate import tri_icosahedron
 
-        nodes["_nx_graph"] = tri_icosahedron.add_edges_to_nx_graph(
-            nodes["_nx_graph"],
-            resolutions=scale_resolutions,
-            x_hops=x_hops,
-            area_mask_builder=nodes.get("_area_mask_builder", None),
-        )
+        if x_hops == 1:
+            LOGGER.debug("Using tri-mesh only strategy for x_hops=1 multiscale-edge building.")
+            print("Using tri-mesh only strategy for x_hops=1 multiscale-edge building.")
+            # Compute the multiscale edges directly and store them in the node storage
+            # No need of the networkx graph
+            multiscale_edges = tri_icosahedron.add_1_hop_edges(
+                nodes_coords_rad=nodes["x"],
+                node_resolutions=nodes["_resolutions"],
+                edge_resolutions=scale_resolutions,
+                node_ordering=nodes["_node_ordering"],
+                area_mask_builder=nodes.get("_area_mask_builder", None),
+            )
+            nodes["_multiscale_edges"] = multiscale_edges
+        else:
+            LOGGER.info("Using networkx strategy for multiscale-edge building.")
+            print("Using networkx strategy for multiscale-edge building.")
+            nodes["_nx_graph"] = tri_icosahedron.add_edges_to_nx_graph(
+                nodes["_nx_graph"],
+                resolutions=scale_resolutions,
+                x_hops=x_hops,
+                area_mask_builder=nodes.get("_area_mask_builder", None),
+            )
         return nodes
 
 
@@ -60,10 +77,23 @@ class StretchedTriNodesEdgeBuilder(BaseIcosahedronEdgeStrategy):
         all_points_mask_builder = KNNAreaMaskBuilder("all_nodes", 1.0)
         all_points_mask_builder.fit_coords(nodes.x.numpy())
 
-        nodes["_nx_graph"] = tri_icosahedron.add_edges_to_nx_graph(
-            nodes["_nx_graph"],
-            resolutions=scale_resolutions,
-            x_hops=x_hops,
-            area_mask_builder=all_points_mask_builder,
-        )
+        if x_hops == 1:
+            LOGGER.debug("Using tri-mesh only strategy for x_hops=1 multiscale-edge building.")
+            # Compute the multiscale edges directly and store them in the node storage
+            # No need of the networkx graph
+            multiscale_edges = tri_icosahedron.add_1_hop_edges(
+                nodes_coords_rad=nodes["x"],
+                node_resolutions=nodes["_resolutions"],
+                edge_resolutions=scale_resolutions,
+                node_ordering=nodes["_node_ordering"],
+                area_mask_builder=all_points_mask_builder,
+            )
+            nodes["_multiscale_edges"] = multiscale_edges
+        else:
+            nodes["_nx_graph"] = tri_icosahedron.add_edges_to_nx_graph(
+                nodes["_nx_graph"],
+                resolutions=scale_resolutions,
+                x_hops=x_hops,
+                area_mask_builder=all_points_mask_builder,
+            )
         return nodes

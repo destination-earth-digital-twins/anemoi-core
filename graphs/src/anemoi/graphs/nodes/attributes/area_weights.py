@@ -176,7 +176,7 @@ class PlanarAreaWeights(BaseAreaWeights):
 
         # Compute convex hull over all points (boundary ring included)
         extended_points = np.vstack([latlons, boundary_points])
-        v = Voronoi(extended_points, qhull_options="QJ Pp")
+        v = Voronoi(extended_points, qhull_options="QJ0.2") #"QJ Pp")
 
         # Compute the area of each node's region, excluding those in the boundary ring
         areas = []
@@ -286,7 +286,7 @@ class SphericalAreaWeights(BaseAreaWeights):
             Spherical area weights.
         """
         points = latlon_rad_to_cartesian_np(latlons)
-        sv = SphericalVoronoi(points, self.radius, self.centre)
+        sv = SphericalVoronoi(points, self.radius, self.centre, threshold=1e-08)
         mask = np.array([bool(i) for i in sv.regions])
         sv.regions = [region for region in sv.regions if region]
         # compute the area weight without empty regions

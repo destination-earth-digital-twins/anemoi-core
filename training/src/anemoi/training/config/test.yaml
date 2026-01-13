@@ -1,0 +1,27 @@
+dataset:
+  cutout:
+    - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/MEPS/aifs-meps-2.5km-2020-2023-6h-v7.zarr
+    - concat: 
+      - join: 
+        - concat: 
+          - dataset: "/leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr"
+            drop: ["cp", "slor", "sdor", "tcw", "q_50", "q_250", "q_600", "t_50", "t_250", "t_600", "u_50", "u_250", "u_600", "v_50", "v_250", "v_600", "w_50", "w_250", "w_600", "z_50", "z_250", "z_600"]
+            start: 1979-01-01
+            end: 2022-12-31
+            reorder: sort
+          - dataset: "/leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-od-an-oper-0001-mars-n320-2019-2023-6h-v6.zarr"
+            start: "2023-01-01"
+            end: None
+            drop: ["cp", "slor", "sdor", "tcw", "q_50", "q_250", "q_600", "t_50", "t_250", "t_600", "u_50", "u_250", "u_600", "v_50", "v_250", "v_600", "w_50", "w_250", "w_600", "z_50", "z_250", "z_600"]                 
+            reorder: sort
+        - dataset: "/leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr
+          select: ["lcc", "mcc", "hcc", "tcc", "strd", "ssrd"]
+        reorder: sort
+      - dataset: "/leonardo_work/DestE_330_25/anemoi/datasets/IFS/aifs-od-an-oper-0001-mars-n320-2024-2025-6h-v1.zarr"
+        drop: ['al','cp', 'latitude', 'longitude', 'q_250', 'q_50', 'q_600', 'sdor', 'slor', 'sr', 'stl1', 'swvl1', 't_250', 't_50', 't_600', 'tcw', 'u_250', 'u_50', 'u_600', 'v_250', 'v_50', 'v_600', 'w_250', 'w_50', 'w_600', 'z_250', 'z_50', 'z_600']
+        reorder: sort  
+      reorder: sort
+  min_distance_km: 0
+  adjust: all
+  reorder: sort
+  statistics: "/leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr"

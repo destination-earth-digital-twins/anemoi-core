@@ -61,13 +61,21 @@ def multi_graph_setup(config: DictConfig) -> HeteroData:
             config.hardware.paths.graph,
             label + ".pt",
         )
-
+        print("GRAPH FILENAME:")
+        print(graph_filename)
         if graph_filename.exists() and not config.graph.overwrite:
             LOGGER.info(f"Loading graph from {graph_filename}")
+            # graph = torch.load(
+            #     graph_filename,
+            #     map_location=get_distributed_device(),
+            #     weights_only=False,
+            # )
+            # graph = graph_filename
             graph = torch.load(
                 graph_filename,
-                map_location=get_distributed_device(),
+                map_location='cpu',
                 weights_only=False,
+                mmap = True,
             )
         else:
             graph_config = convert_to_omegaconf(config).graph
