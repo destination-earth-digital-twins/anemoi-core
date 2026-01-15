@@ -25,6 +25,7 @@ from anemoi.models.distributed.shapes import get_or_apply_shard_shapes
 from anemoi.models.distributed.shapes import get_shard_shapes
 from anemoi.models.models import AnemoiModelEncProcDec
 from anemoi.utils.config import DotDict
+from anemoi.graphs.utils import get_distributed_device
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class DeterministicMultiDomain(AnemoiModelEncProcDec):
             A dictonary of truncation matrices
         """
         model_config = DotDict(model_config)
+        self.model_config = model_config
         self.edge_dim = getattr(model_config.model, "edge_dim", 3)
         self.node_dim = getattr(model_config.model, "node_dim", 4)
         
@@ -451,13 +453,16 @@ class EnsembleMultiDomain(DeterministicMultiDomain):
             batch_size, ensemble_size, in_out_sharded, model_comm_group
         )
 
-        graph = self._graph_data[graph_label]
-        graph.to(x.device)
-        # graph = torch.load(
-        #         self._graph_data[graph_label],
-        #         map_location=x.device,
-        #         weights_only=False,
-        #     )
+        # graph = self._graph_data[graph_label]
+        # graph.to(x.device)
+        graph = torch.load(
+                self._graph_data[graph_label],
+                map_location=x.device,
+                weights_only=False,
+            )
+        self.output_mask=instantiate(self.model_config.model_dump(by_alias=True).model.output_mask, graph_data=graph)
+        self.latlons_data = graph[self.model_config.graph.data].x
+        self.graph = graph
         self.current_graph_label = graph_label
 
 

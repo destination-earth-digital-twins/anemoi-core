@@ -111,7 +111,6 @@ class NativeGridDataset(IterableDataset):
             self.grid_size = self.data.shape[self.grid_dim]
     
     @cached_property
-
     def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
         """
         Creates grid_indices object for a given graph structure.
@@ -133,11 +132,11 @@ class NativeGridDataset(IterableDataset):
                 grid_indices = instantiate(
                     self.config.dataloader.grid_indices,
                     reader_group_size=reader_group_size,
-                    self.grid_size[domain],
+                    grid_size=self.grid_size[domain],
                 )
                 grid_indices.setup()
                 grid_indices_dict[domain] = grid_indices
-            
+            print("Dynamic grid indices computed")
             return grid_indices_dict
         else:
             grid_indices = instantiate(

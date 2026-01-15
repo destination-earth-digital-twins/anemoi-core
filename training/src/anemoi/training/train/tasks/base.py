@@ -37,6 +37,7 @@ from anemoi.training.schemas.base_schema import BaseSchema
 from anemoi.training.schemas.base_schema import convert_to_omegaconf
 from anemoi.training.utils.enums import TensorDim
 from anemoi.training.utils.variables_metadata import ExtractVariableGroupAndLevel
+from anemoi.training.data.grid_indices import BaseGridIndices
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -139,6 +140,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         statistics: dict,
         statistics_tendencies: dict,
         data_indices: IndexCollection,
+        grid_indices: BaseGridIndices | dict,
         metadata: dict,
         supporting_arrays: dict,
         field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
@@ -164,6 +166,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         """
         super().__init__()
+        self.config = config
         self.dynamic_mode = config.model.dynamic_mode
 
         if self.dynamic_mode:
@@ -180,26 +183,27 @@ class BaseGraphModule(pl.LightningModule, ABC):
             )
             graph_data = graph_data.to(self.device)
 
-        self.output_mask: torch.nn.Module | dict[str, torch.nn.Module] = self._mapper(
-            lambda G: instantiate(
-                    config.model_dump(by_alias=True).model.output_mask, graph_data=G
-                ), graph_data
-        )
+        # self.output_mask: torch.nn.Module | dict[str, torch.nn.Module] = self._mapper(
+        #     lambda G: instantiate(
+        #             config.model_dump(by_alias=True).model.output_mask, graph_data=G
+        #         ), graph_data
+        # )
 
-        if self.dynamic_mode:
-            # merge supporting_arrays per domain
-            merged_supporting_arrays = {
-                domain: (
-                    supporting_arrays[domain]
-                    | self.output_mask[domain].supporting_arrays
-                )
-                for domain in supporting_arrays.keys()
-            }
-        else:
-            # single global merge
-            merged_supporting_arrays = (
-                supporting_arrays | self.output_mask.supporting_arrays
-            )
+        # if self.dynamic_mode:
+        #     # merge supporting_arrays per domain
+        #     merged_supporting_arrays = {
+        #         domain: (
+        #             supporting_arrays[domain]
+        #             | self.output_mask[domain].supporting_arrays
+        #         )
+        #         for domain in supporting_arrays.keys()
+        #     }
+        # else:
+        #     # single global merge
+        #     merged_supporting_arrays = (
+        #         supporting_arrays | self.output_mask.supporting_arrays
+            # )
+        merged_supporting_arrays = supporting_arrays
 
         self.model = AnemoiModelInterface(
             statistics=statistics,
@@ -212,19 +216,12 @@ class BaseGraphModule(pl.LightningModule, ABC):
             config=convert_to_omegaconf(config),
         )
         self.dataset_labels = graph_data.keys() if self.dynamic_mode else None
-        self.config = config
         self.data_indices = data_indices
         self._check_valid_field_shape
         self.field_shape = field_shape
 
         self.save_hyperparameters()
         
-        self.latlons_data = self._mapper(
-            lambda G: G[config.graph.data].x, graph_data
-        )
-
-        # TODO: check this out
-        self.statistics_tendencies = statistics_tendencies
 
         self.logger_enabled = (
             config.diagnostics.log.wandb.enabled
@@ -243,6 +240,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
+        # TODO: check this out
+        self.statistics_tendencies = statistics_tendencies
+        self.statistics = statistics
+        self.metadata_extractor = metadata_extractor
+
         if self.dynamic_mode:
             domain_weights = getattr(
                     config.model_dump(by_alias=True).training,
@@ -260,40 +262,46 @@ class BaseGraphModule(pl.LightningModule, ABC):
             )
         
             assert per_domain_weight_frac_of_total, msg
-
-        self.scalers_and_updating_scalars = self._mapper(
-                lambda _G, _S, _ST, _ME, _OM, **extra_kwargs: create_scalers(
+            self.per_domain_weight_frac_of_total = per_domain_weight_frac_of_total
+        print("Creating scalers...")
+        # self.scalers_and_updating_scalars = self._mapper(
+        #         lambda _G, _S, _ST, _ME, _OM, **extra_kwargs: create_scalers(
+        #             config.model_dump(by_alias=True).training.scalers,
+        #             data_indices=data_indices,
+        #             statistics=_S,
+        #             statistics_tendencies=_ST,
+        #             metadata_extractor=_ME,
+        #             **extra_kwargs
+        #         ),
+        #         statistics, 
+        #         statistics_tendencies, 
+        #         metadata_extractor, 
+        #         extra_kwargs=per_domain_weight_frac_of_total if self.dynamic_mode else {}
+        #     )
+        self.scalers_and_updating_scalars = create_scalers(
                     config.model_dump(by_alias=True).training.scalers,
                     data_indices=data_indices,
-                    graph_data=_G,
-                    statistics=_S,
-                    statistics_tendencies=_ST,
-                    metadata_extractor=_ME,
-                    output_mask=_OM,
-                    **extra_kwargs
+                    statistics=statistics,
+                    statistics_tendencies=statistics_tendencies,
+                    metadata_extractor=metadata_extractor,
+                    extra_kwargs=per_domain_weight_frac_of_total if self.dynamic_mode else {}
                 ),
-                graph_data, 
-                statistics, 
-                statistics_tendencies, 
-                metadata_extractor, 
-                self.output_mask,
-                extra_kwargs=per_domain_weight_frac_of_total if self.dynamic_mode else {}
-            )
+
         
-        if self.dynamic_mode:
+        # if self.dynamic_mode:
 
-            self.scalers = {
-                label: _value[0]
-                for label, _value in self.scalers_and_updating_scalars.items()
-            }
+        #     self.scalers = {
+        #         label: _value[0]
+        #         for label, _value in self.scalers_and_updating_scalars.items()
+        #     }
 
-            self.updating_scalars ={
-                label: _value[1]
-                for label, _value in self.scalers_and_updating_scalars.items()
-            }
-        else:
-            self.scalers = self.scalers_and_updating_scalars[0]
-            self.updating_scalars = self.scalers_and_updating_scalars[1]  
+        #     self.updating_scalars ={
+        #         label: _value[1]
+        #         for label, _value in self.scalers_and_updating_scalars.items()
+        #     }
+        # else:
+        self.scalers = self.scalers_and_updating_scalars[0]
+        self.updating_scalars = self.scalers_and_updating_scalars[1]  
 
 
         self.val_metric_ranges = self._mapper(
@@ -305,16 +313,27 @@ class BaseGraphModule(pl.LightningModule, ABC):
         )
 
         # do we need N losses? where N is number of graphs/domain.
-        self.loss = self._mapper(
-            lambda _scalers, **extra_kwargs : get_loss_function(
-                config.model_dump(by_alias=True).training.training_loss,
-                scalers=_scalers,
-                data_indices=self.data_indices,
-                **extra_kwargs
-                ),
-            self.scalers,
-            extra_kwargs=self.field_shape if self.field_shape is not None else {}
-            )
+        # yes because the scalers are different per domain (per-domain weighting/graph node weighting)
+        # can we update the scalers in each iteration?
+        # the scalers are now dynamic (graph-independent) so we can update them each iteration
+        # self.loss = self._mapper(
+        #     lambda _scalers, **extra_kwargs : get_loss_function(
+        #         config.model_dump(by_alias=True).training.training_loss,
+        #         scalers=_scalers,
+        #         data_indices=self.data_indices,
+        #         **extra_kwargs
+        #         ),
+        #     self.scalers,
+        #     extra_kwargs=self.field_shape if self.field_shape is not None else {}
+        #     )
+
+        #self.loss should get updated in each iteration
+        self.loss = get_loss_function(
+            config.model_dump(by_alias=True).training.training_loss,
+            scalers=self.scalers,
+            data_indices=self.data_indices,
+            field_shape=self.field_shape if self.field_shape is not None else {}
+        )
         
         self._scaling_values_log = self._mapper(
             lambda _loss: print_variable_scaling(
@@ -323,21 +342,31 @@ class BaseGraphModule(pl.LightningModule, ABC):
             ), self.loss
         )
 
-        self.metrics = self._mapper(
-            lambda _scaler: torch.nn.ModuleDict(
-                {
+        # self.metrics = self._mapper(
+        #     lambda _scaler: torch.nn.ModuleDict(
+        #         {
+        #             metric_name: get_loss_function(
+        #                 val_metric_config,
+        #                 scalers=_scaler,
+        #                 data_indices=self.data_indices,
+        #             )
+        #             for metric_name, val_metric_config in config.model_dump(
+        #                 by_alias=True
+        #             ).training.validation_metrics.items()
+        #         }
+        #     ),
+        #     self.scalers,
+        # )
+        self.metrics = torch.nn.ModuleDict({
                     metric_name: get_loss_function(
                         val_metric_config,
-                        scalers=_scaler,
+                        scalers=self.scalers,
                         data_indices=self.data_indices,
                     )
                     for metric_name, val_metric_config in config.model_dump(
                         by_alias=True
                     ).training.validation_metrics.items()
-                }
-            ),
-            self.scalers,
-        )
+                })
 
         if config.training.loss_gradient_scaling:
             self.loss.register_full_backward_hook(grad_scaler, prepend=False)
@@ -360,21 +389,22 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         reader_group_size = self.config.dataloader.read_group_size
 
-        if self.dynamic_mode:
-            self.grid_indices = {}
-            for label in graph_data.keys():
-                _grid_indices = instantiate(
-                    self.config.model_dump(by_alias=True).dataloader.grid_indices,
-                    reader_group_size=reader_group_size,
-                )
-                _grid_indices.setup(graph_data[label])
-                self.grid_indices[label] = _grid_indices
-        else:
-            self.grid_indices = instantiate(
-                self.config.model_dump(by_alias=True).dataloader.grid_indices,
-                reader_group_size=reader_group_size,
-            )
-            self.grid_indices.setup(graph_data)
+        # if self.dynamic_mode:
+        #     self.grid_indices = {}
+        #     for label in graph_data.keys():
+        #         _grid_indices = instantiate(
+        #             self.config.model_dump(by_alias=True).dataloader.grid_indices,
+        #             reader_group_size=reader_group_size,
+        #         )
+        #         _grid_indices.setup(graph_data[label])
+        #         self.grid_indices[label] = _grid_indices
+        # else:
+        #     self.grid_indices = instantiate(
+        #         self.config.model_dump(by_alias=True).dataloader.grid_indices,
+        #         reader_group_size=reader_group_size,
+        #     )
+        #     self.grid_indices.setup(graph_data)
+        self.grid_indices = grid_indices
         self.grid_dim = -2
 
         self.keep_batch_sharded = self.config.model.keep_batch_sharded
@@ -492,7 +522,8 @@ class BaseGraphModule(pl.LightningModule, ABC):
         """
         if self.dynamic_mode:
             _curr_label = self.model.model.current_graph_label
-            self.model.model._graph_data[_curr_label].to("cpu")
+            # self.model.model._graph_data[_curr_label].to("cpu")
+            self.model.model.graph.to("cpu")
         
     def _mapper(
             self, 

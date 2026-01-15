@@ -46,7 +46,7 @@ var_tendency:
 # Notice it is crucial the domain1 name is the same as the one used in regional_datasets keys
 
 node_weights:
-  _target_: anemoi.training.losses.scalers.ReweightedGraphNodeAttributeScaler
+  _target_: anemoi.training.losses.scalers.DynamicReweightedGraphNodeAttributeScaler
   nodes_name: ${graph.data}
   nodes_attribute_name: area_weight
   scaling_mask_attribute_name: cutout_mask
@@ -63,13 +63,13 @@ node_weights:
 #   norm: "unit-sum"
 
 limited_area_mask:
-  _target_: anemoi.training.losses.scalers.GraphNodeAttributeScaler
+  _target_: anemoi.training.losses.scalers.DynamicGraphNodeAttributeScaler
   nodes_name: ${graph.data}
   nodes_attribute_name: cutout_mask
   norm: null
 
 outside_lam_mask:
-  _target_: anemoi.training.losses.scalers.GraphNodeAttributeScaler
+  _target_: anemoi.training.losses.scalers.DynamicGraphNodeAttributeScaler
   nodes_name: ${graph.data}
   nodes_attribute_name: boundary_mask
   norm: null

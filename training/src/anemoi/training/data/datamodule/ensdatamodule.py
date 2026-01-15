@@ -35,8 +35,6 @@ class AnemoiEnsDatasetsDataModule(AnemoiDatasetsDataModule):
         ----------
         config : BaseSchema
             Job configuration
-        graph_data: HeteroData
-            graph and its information
 
     """
 

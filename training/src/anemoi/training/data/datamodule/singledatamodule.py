@@ -181,6 +181,21 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
         )
         return data_reader
 
+    @cached_property
+    def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
+        """
+        Creates grid_indices object for a given graph structure.
+        Notice when dynamic_mode is enabled, multiple grid_indices
+        object is created per label and graph.
+
+        args:
+            None
+        return:
+            grid_indices object | dict of grid_indices objects
+
+        """
+        print("Using grid indices from training dataset")
+        return self.ds_train.grid_indices
     # @cached_property
     # def grid_indices(self) -> type[BaseGridIndices] | dict[str, type[BaseGridIndices]]:
     #     """

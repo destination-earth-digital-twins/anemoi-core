@@ -154,7 +154,6 @@ class AnemoiTrainer:
         datamodule = instantiate(
             convert_to_omegaconf(self.config).datamodule,
             convert_to_omegaconf(self.config),
-            self.graph_data,
         )
         self.config.data.num_features = len(
             datamodule.data_variables
@@ -177,6 +176,14 @@ class AnemoiTrainer:
         This is used to slice the data.
         """
         return self.datamodule.data_indices
+
+    @cached_property
+    def grid_indices(self) -> dict:
+        """Returns the grid indices.
+
+        This is used to shard the data along the grid dimension.
+        """
+        return self.datamodule.grid_indices
 
     @cached_property
     def initial_seed(self) -> int:

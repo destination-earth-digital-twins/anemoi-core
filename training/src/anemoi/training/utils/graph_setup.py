@@ -70,13 +70,13 @@ def multi_graph_setup(config: DictConfig) -> HeteroData:
             #     map_location=get_distributed_device(),
             #     weights_only=False,
             # )
-            # graph = graph_filename
-            graph = torch.load(
-                graph_filename,
-                map_location='cpu',
-                weights_only=False,
-                mmap = True,
-            )
+            graph = graph_filename
+            # graph = torch.load(
+            #     graph_filename,
+            #     map_location='cpu',
+            #     weights_only=False,
+            #     mmap = True,
+            # )
         else:
             graph_config = convert_to_omegaconf(config).graph
             graph = AnemoiDatasetNodes(data, name=config.graph.data).update_graph(

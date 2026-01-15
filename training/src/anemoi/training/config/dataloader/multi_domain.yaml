@@ -40,7 +40,7 @@ limit_batches:
 # set a custom mask for grid points.
 # Useful for LAM (dropping unconnected nodes from forcing dataset)
 grid_indices:
-  _target_: anemoi.training.data.grid_indices.FullGrid
+  _target_: anemoi.training.data.grid_indices.GraphIndependentGrid
   nodes_name: ${graph.data}
 
 # ============
