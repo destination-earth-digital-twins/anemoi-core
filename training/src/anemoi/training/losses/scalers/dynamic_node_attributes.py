@@ -13,7 +13,7 @@ import logging
 import torch
 from torch_geometric.data import HeteroData
 
-from anemoi.training.losses.scalers.base_scaler import BaseScaler
+from anemoi.training.losses.scalers.base_scaler import BaseUpdatingScaler
 from anemoi.training.utils.enums import TensorDim
 from anemoi.training.utils.masks import BaseMask
 from anemoi.training.utils.masks import NoOutputMask
@@ -21,17 +21,15 @@ from anemoi.training.utils.masks import NoOutputMask
 LOGGER = logging.getLogger(__name__)
 
 
-class GraphNodeAttributeScaler(BaseScaler):
+class DynamicGraphNodeAttributeScaler(BaseUpdatingScaler):
     """Class for extracting scalers from node attributes."""
 
     scale_dims: TensorDim = TensorDim.GRID
 
     def __init__(
         self,
-        graph_data: HeteroData,
         nodes_name: str,
         nodes_attribute_name: str | None = None,
-        output_mask: type[BaseMask] | None = None,
         inverse: bool = False,
         norm: str | None = None,
         **kwargs,
@@ -53,8 +51,9 @@ class GraphNodeAttributeScaler(BaseScaler):
         """
         super().__init__(norm=norm)
         del kwargs
-        self.output_mask = output_mask if output_mask is not None else NoOutputMask()
-        self.nodes = graph_data[nodes_name]
+        # self.output_mask = output_mask if output_mask is not None else NoOutputMask()
+        # self.nodes = graph_data[nodes_name]
+        self.nodes_name = nodes_name
         self.nodes_attribute_name = nodes_attribute_name
         self.inverse = inverse
 
@@ -63,8 +62,13 @@ class GraphNodeAttributeScaler(BaseScaler):
         scaler_values = ~scaler_values if self.inverse else scaler_values
         return self.output_mask.apply(scaler_values, dim=0, fill_value=0.0)
 
+    def on_batch_start(self, model):
+        self.output_mask = model.model.model.output_mask if model.model.model.output_mask is not None else NoOutputMask()
+        self.nodes = model.model.model.graph[self.nodes_name]
+        scaling_values = self.get_scaling_values()
+        return scaling_values
 
-class ReweightedGraphNodeAttributeScaler(GraphNodeAttributeScaler):
+class DynamicReweightedGraphNodeAttributeScaler(DynamicGraphNodeAttributeScaler):
     """Class for extracting and reweighting node attributes.
 
     Subset nodes will be scaled such that their weight sum equals weight_frac_of_total of the sum
@@ -73,12 +77,10 @@ class ReweightedGraphNodeAttributeScaler(GraphNodeAttributeScaler):
 
     def __init__(
         self,
-        graph_data: HeteroData,
         nodes_name: str,
         nodes_attribute_name: str,
         scaling_mask_attribute_name: str,
         weight_frac_of_total: float,
-        output_mask: type[BaseMask] | None = None,
         inverse: bool = False,
         norm: str | None = None,
         **kwargs,
@@ -86,17 +88,12 @@ class ReweightedGraphNodeAttributeScaler(GraphNodeAttributeScaler):
         self.scaling_mask_attribute_name = scaling_mask_attribute_name
         self.weight_frac_of_total = weight_frac_of_total
         super().__init__(
-            graph_data=graph_data,
             nodes_name=nodes_name,
             nodes_attribute_name=nodes_attribute_name,
-            output_mask=output_mask,
             inverse=inverse,
             norm=norm,
             **kwargs,
         )
-        if self.scaling_mask_attribute_name not in self.nodes:
-            error_msg = f"scaling_mask_attribute_name {self.scaling_mask_attribute_name} not found in graph_object"
-            raise KeyError(error_msg)
 
     def reweight_attribute_values(self, values: torch.Tensor) -> torch.Tensor:
         scaling_mask = self.nodes[self.scaling_mask_attribute_name].squeeze()
@@ -116,3 +113,12 @@ class ReweightedGraphNodeAttributeScaler(GraphNodeAttributeScaler):
     def get_scaling_values(self, **kwargs) -> torch.Tensor:
         attribute_values = super().get_scaling_values(**kwargs)
         return self.reweight_attribute_values(attribute_values)
+
+    def on_batch_start(self, model):
+        self.output_mask = model.model.model.output_mask if model.model.model.output_mask is not None else NoOutputMask()
+        self.nodes = model.model.model.graph[self.nodes_name]
+        if self.scaling_mask_attribute_name not in self.nodes:
+            error_msg = f"scaling_mask_attribute_name {self.scaling_mask_attribute_name} not found in graph_object"
+            raise KeyError(error_msg)
+        scaling_values = self.get_scaling_values()
+        return scaling_values

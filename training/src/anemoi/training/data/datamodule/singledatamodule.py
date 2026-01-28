@@ -116,6 +116,24 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
 
         return self.ds_train.data.variables
 
+    @cached_property
+    def field_shapes(self) -> tuple | dict[str, tuple] | None:
+        if self.dynamic_mode:
+            LOGGER.info("Dynamic mode enabled. Creating a dictonary of field shape:")
+            return {
+                domain : {"field_shape" : _data.field_shape} for domain, _data in self.ds_train.data.items()
+            }
+
+        _field_shape = self.ds_train.data.field_shape
+        LOGGER.info("Field shape: %s", _field_shape)
+        if len(_field_shape)==1:
+            LOGGER.warning(
+                "Field shape has only one dimension, is this expected? %s . Returning None",
+                _field_shape,
+            )
+            return None
+        return {"field_shape" : _field_shape}
+
     def relative_date_indices(self, val_rollout: int = 1) -> list:
         """Determine a list of relative time indices to load for each batch."""
         if hasattr(self.config.training, "explicit_times"):

@@ -66,7 +66,7 @@ def multi_graph_setup(config: DictConfig) -> HeteroData:
             LOGGER.info(f"Loading graph from {graph_filename}")
             graph = torch.load(
                 graph_filename,
-                map_location=get_distributed_device(),
+                map_location='cpu',
                 weights_only=False,
             )
         else:

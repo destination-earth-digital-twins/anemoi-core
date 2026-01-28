@@ -68,8 +68,11 @@ class AnemoiTrainer:
         ), f"dynamic_mode required type bool, got {config.model.dynamic_mode}"
         if config.model.dynamic_mode:
             LOGGER.info("Dynamic mode enabled.")
-            hectometric = getattr(self.config.dataloader, "hectometric", False)
+            hectometric = getattr(config.dataloader, "hectometric", False)
             config = self.get_processed_configs(config, hectometric=hectometric)
+            print("Processed configs for dynamic mode.")
+            print(type(config))
+
 
         if config.config_validation:
             OmegaConf.resolve(config)
@@ -105,11 +108,13 @@ class AnemoiTrainer:
 
         # Update dry_run attribute, check if checkpoint exists
         self._check_dry_run()
+        print("Dry run checked.")
 
         # Check for dry run, i.e. run id without data
         self._log_information()
+        print("Information logged.")
 
-    def get_processed_configs(self, config) -> DictConfig:
+    def get_processed_configs(self, config, hectometric = False) -> DictConfig:
         """
         Enable processing of multiple entries for different regions.
 
@@ -144,7 +149,7 @@ class AnemoiTrainer:
         """
         from anemoi.training.utils.process_configs import ProcessConfigs
 
-        pc = ProcessConfigs(base_config=config)
+        pc = ProcessConfigs(base_config=config, hectometric=hectometric)
         pc.process
         return pc.update()
 
@@ -266,6 +271,7 @@ class AnemoiTrainer:
             "statistics": self.datamodule.statistics,
             "statistics_tendencies": self.datamodule.statistics_tendencies,
             "supporting_arrays": self.supporting_arrays,
+            "field_shape": self.datamodule.field_shapes
         }
 
         model_task = get_class(self.config.training.model_task)
@@ -503,9 +509,12 @@ class AnemoiTrainer:
 
     def _log_information(self) -> None:
         # Log number of variables (features)
+        print("Logging training information...")
+        print("calling Dataloader...")
         num_fc_features = len(self.datamodule.data_variables) - len(
             self.config.data.forcing
         )
+        print("Dataloader called.")
         LOGGER.info("Total number of prognostic variables: %d", num_fc_features)
         LOGGER.info(
             "Total number of auxiliary variables: %d", len(self.config.data.forcing)

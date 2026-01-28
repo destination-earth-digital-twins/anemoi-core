@@ -141,6 +141,7 @@ class BaseGraphModule(pl.LightningModule, ABC):
         data_indices: IndexCollection,
         metadata: dict,
         supporting_arrays: dict,
+        field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -209,6 +210,9 @@ class BaseGraphModule(pl.LightningModule, ABC):
             config=convert_to_omegaconf(config),
         )
         self.config = config
+        self.dataset_labels = graph_data.keys() if self.dynamic_mode else None
+        self._check_valid_field_shape
+        self.field_shape = field_shape
         self.data_indices = data_indices
 
         self.save_hyperparameters()
@@ -238,14 +242,31 @@ class BaseGraphModule(pl.LightningModule, ABC):
         # Instantiate all scalers with the training configuration
         # working for both dynamic and static mode
         if self.dynamic_mode:
-            per_domain_weight_frac_of_total = OmegaConf.to_container(
-                getattr(
+            domain_weights = getattr(
                     config.model_dump(by_alias=True).training,
                     "per_domain_weight_frac_of_total",
                     {}
-                ),
-                resolve=True
+                )
+            if isinstance(domain_weights, float):
+                per_domain_weight_frac_of_total = {label: {"weight_frac_of_total": domain_weights} for label in self.dataset_labels}
+            else:
+                per_domain_weight_frac_of_total = OmegaConf.to_container(domain_weights, resolve=True)
+
+            msg = (
+                f"In dynamic mode, per_domain_weight_frac_of_total must be provided"
+                f"in the config under training.scalers. Got: {per_domain_weight_frac_of_total}"
             )
+
+            assert per_domain_weight_frac_of_total, msg
+            self.per_domain_weight_frac_of_total = per_domain_weight_frac_of_total
+            # per_domain_weight_frac_of_total = OmegaConf.to_container(
+            #     getattr(
+            #         config.model_dump(by_alias=True).training,
+            #         "per_domain_weight_frac_of_total",
+            #         {}
+            #     ),
+            #     resolve=True
+            # )
 
             msg = (
                 f"In dynamic mode, per_domain_weight_frac_of_total must be provided"
@@ -298,12 +319,14 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         # do we need N losses? where N is number of graphs/domain.
         self.loss = self._mapper(
-            lambda _scalers : get_loss_function(
+            lambda _scalers, **extra_kwargs : get_loss_function(
                 config.model_dump(by_alias=True).training.training_loss,
                 scalers=_scalers,
                 data_indices=self.data_indices,
+                **extra_kwargs
                 ),
-            self.scalers
+            self.scalers,
+            extra_kwargs=self.field_shape if self.field_shape is not None else {}
             )
         
         self._scaling_values_log = self._mapper(
@@ -425,6 +448,36 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         self.grid_shard_shapes = None
         self.grid_shard_slice = None
+
+    def _check_valid_field_shape(self, field_shape: tuple[int,int] | dict[str,tuple[int,int]] | None) -> None:
+        """Check that the provided field shape is valid.
+        Parameters
+        ----------
+        field_shape : tuple[int,int] | dict[str,tuple[int,int]]
+            Field shape to check
+        Returns
+        -------
+        None
+        """
+        if field_shape is None:
+            return
+
+        if self.dynamic_mode:
+            assert isinstance(field_shape, dict), (
+                f"In dynamic mode, field_shape must be a dict mapping domain labels to shapes. "
+                f"Got {type(field_shape)}."
+            )
+            for label, shape in field_shape.items():
+                assert (
+                    len(shape) == 2
+                ), f"Field shape for domain {label} must be a tuple of length 2. Got {shape}."
+        else:
+            assert isinstance(field_shape, tuple), (
+                f"In static mode, field_shape must be a tuple. Got {type(field_shape)}."
+            )
+            assert (
+                len(field_shape) == 2
+            ), f"Field shape must be a tuple of length 2. Got {field_shape}."
 
     def forward(self, x: torch.Tensor, graph_label: str = None) -> torch.Tensor:
         #TODO: add assertion or if test for dynamic mode

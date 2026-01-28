@@ -43,6 +43,8 @@ class GraphEnsForecaster(BaseGraphModule):
         data_indices: dict,
         metadata: dict,
         supporting_arrays: dict,
+            field_shape: tuple[int, int] | dict[str, tuple[int, int]] | None = None,
+
     ) -> None:
         """Initialize graph neural network forecaster.
 
@@ -66,6 +68,7 @@ class GraphEnsForecaster(BaseGraphModule):
             data_indices=data_indices,
             metadata=metadata,
             supporting_arrays=supporting_arrays,
+            field_shape=field_shape,
         )
 
         self.rollout = config.training.rollout.start

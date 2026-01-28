@@ -25,23 +25,31 @@ class ProcessConfigs:
         returns:
             None
         """
+        self.hectometric = hectometric
         OmegaConf.resolve(base_config)
         self.config = OmegaConf.to_container(base_config, resolve=True)
-
         self.struct = self.config["dataloader"]
+        print(self.struct)
         if hectometric:
-            self.struct_train = getattr(
-                self.config["dataloader"], "hectometric_dataset_training", None
-            )
-            self.struct_val = getattr(
-                self.config["dataloader"], "hectometric_dataset_validation", None
-            )
-            assert (
-                self.struct_train is not None
-            ), f"Hectometric run enabled, hectometric training dataset path is not provided."
-            assert (
-                self.struct_train is not None
-            ), f"Hectometric run enabled, hectometric validation dataset path is not provided."
+            print(self.struct)
+            self.struct_train = self.config["dataloader"]["hectometric_dataset_training"]
+            self.struct_val = self.config["dataloader"]["hectometric_dataset_validation"]
+            print(self.struct_train)
+            print(self.struct_val)
+            # self.struct_train = getattr(
+            #     self.config["dataloader"], "hectometric_dataset_training", None
+            # )
+            # print(self.struct_train)
+            # self.struct_val = getattr(
+            #     self.config["dataloader"], "hectometric_dataset_validation", None
+            # )
+            # print(self.struct_val)
+            # assert (
+            #     self.struct_train is not None
+            # ), f"Hectometric run enabled, hectometric training dataset path is not provided."
+            # assert (
+            #     self.struct_train is not None
+            # ), f"Hectometric run enabled, hectometric validation dataset path is not provided."
         else:
             self.regional = self.config["dataloader"]["regional_datasets"]
 
@@ -100,6 +108,69 @@ class ProcessConfigs:
         struct["end"] = end
 
         return struct
+    
+    def process_text_file_hecto(self, name, phase):
+        base_path = self.config["dataloader"]["hectometric_dataset_base_path"]
+        with open(name, "r") as f:
+            print("reading file from .txt")
+            ls = f.readlines()
+            for lines in ls:
+                filename = lines.strip('\n')
+                key = filename.split(".")[0]
+
+                splitted = lines.split("_")
+
+                start, end = splitted[1:3]
+                start = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
+                end = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+                print(filename)
+                directory = base_path + filename
+                if filename.endswith("v2.zarr"):
+                    print("dataset v2")
+                    import os
+                    directory = directory 
+                    print(directory)
+                    tot_filename = os.listdir(directory)[0]
+                    print(tot_filename)
+                    self.TEMPORARY[phase][key] = self._findcutoutnulls(
+                        deepcopy(self.struct[phase]),
+                        replacement={"dataset": directory + '/' + tot_filename},
+                    )
+                else:
+                    print("dataset v3")
+                    self.TEMPORARY[phase][key] = self._findcutoutnulls(
+                        deepcopy(self.struct[phase]),
+                        replacement={"dataset": directory},
+                    )
+                self.TEMPORARY[phase][key] = self._inject_date(
+                    self.TEMPORARY[phase][key],
+                    start=start,
+                    end=end,
+                )
+
+    def process_single_file_hecto(self, name, phase):
+        print("PROCESS SINGLE FILE HECTO")
+        filename = name
+        print(filename)
+        name = name.split("/")[6]
+        print(name)
+        key = name.split(".")[0]
+
+        splitted = name.split("_")
+        print(splitted)
+        start, end = splitted[1:3]
+        print(start, end)
+        start = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
+        end = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
+        self.TEMPORARY[phase][key] = self._findcutoutnulls(
+            deepcopy(self.struct[phase]),
+            replacement={"dataset": filename},
+        )
+        self.TEMPORARY[phase][key] = self._inject_date(
+            self.TEMPORARY[phase][key],
+            start=start,
+            end=end,
+        )
 
     @property
     def process(self):
@@ -113,31 +184,19 @@ class ProcessConfigs:
         returns:
             None
         """
+        print("PROCESS IN PROGRESS")
 
         if self.hectometric:
             for name, phase in [
                 (self.struct_train, "training"),
                 (self.struct_val, "validation"),
             ]:
-                with open(name, "r") as f:
-                    for lines in f:
-                        filename = lines
-                        key = filename.split(".")[0]
-
-                        splitted = lines.split("_")
-
-                        start, end = splitted[1:3]
-                        start = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
-                        end = f"{end[:4]}-{end[4:6]}-{end[6:8]}"
-                        self.TEMPORARY[phase][key] = self._findcutoutnulls(
-                            deepcopy(self.struct[phase]),
-                            replacement={"dataset": filename},
-                        )
-                        self.TEMPORARY[phase][key] = self._inject_date(
-                            self.TEMPORARY[phase][key],
-                            start=start,
-                            end=end,
-                        )
+                if name.endswith(".txt"):
+                    print("PROCESS TEXT FILE HECTO")
+                    self.process_text_file_hecto(name, phase)
+                else: 
+                    print("PROCESS SINGLE FILE HECTO")
+                    self.process_single_file_hecto(name, phase)
         else:
             for phase in ["training", "validation"]:
                 for region, args in self.regional.items():

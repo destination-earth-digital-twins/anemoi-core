@@ -30,7 +30,7 @@ class BaseLoss(nn.Module, ABC):
 
     scaler: ScaleTensor
 
-    def __init__(self, ignore_nans: bool = False) -> None:
+    def __init__(self, ignore_nans: bool = False, **kwargs) -> None:
         """Node- and feature_weighted Loss.
 
         Exposes:
