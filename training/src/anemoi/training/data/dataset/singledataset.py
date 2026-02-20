@@ -165,15 +165,22 @@ class NativeGridDataset(IterableDataset):
             }
         return self.data.metadata()
 
+    # @cached_property
+    # def supporting_arrays(self) -> dict[dict] | dict:
+    #     """Return dataset supporting_arrays."""
+    #     if self.dynamic_mode:
+    #         return {
+    #             label : domain.supporting_arrays() for label, domain in self.data.items()
+    #         }
+    #     return self.data.supporting_arrays()
     @cached_property
     def supporting_arrays(self) -> dict[dict] | dict:
         """Return dataset supporting_arrays."""
         if self.dynamic_mode:
-            return {
-                label : domain.supporting_arrays() for label, domain in self.data.items()
-            }
-        return self.data.supporting_arrays()
-
+            return {}
+        else:
+            return self.data.supporting_arrays()
+            
     @cached_property
     def name_to_index(self) -> dict:
         """Return dataset statistics."""
@@ -537,9 +544,14 @@ class NativeGridDataset(IterableDataset):
         )
         for batch in labeled_samples:
             domain, i = batch 
+            print(f"Loading domain {domain} sample index {i}")
             start = int(i) + self.relative_date_indices[0]
             end = int(i) + self.relative_date_indices[-1] + 1
             timeincrement = self.relative_date_indices[1] - self.relative_date_indices[0]
+            print("grid indices:", self.grid_indices.keys())
+            print("labelled samples: ", labeled_samples)
+            print("current domain: ", domain)
+            print("shuffle: ", self.shuffle)
             current_domain_grid_shard_indices = self.grid_indices[domain].get_shard_indices(self.reader_group_rank)
             if isinstance(current_domain_grid_shard_indices, slice):
                 # Load only shards into CPU memory

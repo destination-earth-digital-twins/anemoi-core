@@ -90,10 +90,11 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
     @cached_property
     def supporting_arrays(self) -> dict | dict[str, dict]:
         if self.dynamic_mode:
-            return {
-                domain : _data | self.grid_indices[domain].supporting_arrays
-                for domain, _data in self.ds_train.supporting_arrays.items()
-            }
+            return None
+            # return {
+            #     domain : _data | self.grid_indices[domain].supporting_arrays
+            #     for domain, _data in self.ds_train.supporting_arrays.items()
+            # }
         return self.ds_train.supporting_arrays | self.grid_indices.supporting_arrays
 
     @cached_property

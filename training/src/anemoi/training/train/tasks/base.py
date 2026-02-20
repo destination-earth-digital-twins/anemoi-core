@@ -186,13 +186,14 @@ class BaseGraphModule(pl.LightningModule, ABC):
 
         if self.dynamic_mode:
             # merge supporting_arrays per domain
-            merged_supporting_arrays = {
-                domain: (
-                    supporting_arrays[domain]
-                    | self.output_mask[domain].supporting_arrays
-                )
-                for domain in supporting_arrays.keys()
-            }
+            # merged_supporting_arrays = {
+            #     domain: (
+            #         supporting_arrays[domain]
+            #         | self.output_mask[domain].supporting_arrays
+            #     )
+            #     for domain in supporting_arrays.keys()
+            # }
+            merged_supporting_arrays = supporting_arrays
         else:
             # single global merge
             merged_supporting_arrays = (

@@ -178,7 +178,7 @@ class AnemoiCheckpoint(ModelCheckpoint):
 
             save_config = model.config
             model.config = None
-
+            model.graph_data = {}
             tmp_metadata = model.metadata
             model.metadata = None
 
@@ -190,7 +190,7 @@ class AnemoiCheckpoint(ModelCheckpoint):
             supporting_arrays = tmp_supporting_arrays.copy()
 
             inference_checkpoint_filepath = self._get_inference_checkpoint_filepath(lightning_checkpoint_filepath)
-
+            model.graph_data = {}
             torch.save(model, inference_checkpoint_filepath)
 
             save_metadata(inference_checkpoint_filepath, metadata, supporting_arrays=supporting_arrays)
@@ -224,7 +224,6 @@ class AnemoiCheckpoint(ModelCheckpoint):
                 model = self._torch_drop_down(trainer)
                 metadata = model.metadata.copy()
                 supporting_arrays = model.supporting_arrays.copy()
-
                 save_metadata(lightning_checkpoint_filepath, metadata, supporting_arrays=supporting_arrays)
 
             # notify loggers

@@ -11,6 +11,8 @@
 import functools
 from collections import deque
 from typing import Any
+import logging
+LOGGER = logging.getLogger(__name__)
 
 
 class FixedLengthSet:
@@ -146,9 +148,15 @@ def clean_config_params(params: dict[str, Any]) -> dict[str, Any]:
         "metadata.dataset.sources",
         "metadata.dataset.specific",
         "metadata.dataset.variables_metadata",
+        "de330",
+        "config",
+        "metadata.de330",
+        "variable_loss_scaling",
+        "field_shape"
     ]
 
     keys_to_remove = [key for key in params if any(key.startswith(prefix) for prefix in prefixes_to_remove)]
     for key in keys_to_remove:
         del params[key]
+    LOGGER.info("Removed %d keys from params to avoid issues with mlflow: %s", len(keys_to_remove), keys_to_remove)
     return params

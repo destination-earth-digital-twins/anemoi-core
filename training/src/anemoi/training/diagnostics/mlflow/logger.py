@@ -169,7 +169,6 @@ class LogsMonitor:
         # uninstall stream patching if no buffer is left in the registry
         if not self._buffer_registry:
             self._uninstall_stream_patches()
-
         with self.file_save_path.open("a") as logfile:
             logfile.write("\n\n")
             logfile.flush()
@@ -680,8 +679,9 @@ class AnemoiMLflowLogger(MLFlowLogger):
             def default(self, o: Any) -> str:
                 return str(o)
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            path = Path(tmp_dir) / "config.json"
-            with Path.open(path, "w") as f:
-                json.dump(params, f, cls=StrEncoder)
-            client.log_artifact(run_id=run_id, local_path=path)
+        # path = Path(tmp_dir) / "config.json"
+        path = "/leonardo_work/DestE_340_26/users/sbuurman/temp/output/config.json"
+        with Path.open(path, "w") as f:
+            json.dump(params, f, cls=StrEncoder)
+        
+        client.log_artifact(run_id=run_id, local_path=path)

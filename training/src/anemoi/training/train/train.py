@@ -69,9 +69,6 @@ class AnemoiTrainer:
         if config.model.dynamic_mode:
             LOGGER.info("Dynamic mode enabled.")
             hectometric = getattr(config.dataloader, "hectometric", False)
-            config = self.get_processed_configs(config, hectometric=hectometric)
-            print("Processed configs for dynamic mode.")
-            print(type(config))
 
 
         if config.config_validation:
@@ -108,11 +105,9 @@ class AnemoiTrainer:
 
         # Update dry_run attribute, check if checkpoint exists
         self._check_dry_run()
-        print("Dry run checked.")
 
         # Check for dry run, i.e. run id without data
         self._log_information()
-        print("Information logged.")
 
     def get_processed_configs(self, config, hectometric = False) -> DictConfig:
         """
@@ -299,9 +294,9 @@ class AnemoiTrainer:
 
             model.data_indices = self.data_indices
             # check data indices in original checkpoint and current data indices are the same
-            self.data_indices.compare_variables(
-                model._ckpt_model_name_to_index, self.data_indices.name_to_index
-            )
+            # self.data_indices.compare_variables(
+            #     model._ckpt_model_name_to_index, self.data_indices.name_to_index
+            # )
 
         if hasattr(self.config.training, "submodules_to_freeze"):
             # Freeze the chosen model weights
@@ -509,12 +504,9 @@ class AnemoiTrainer:
 
     def _log_information(self) -> None:
         # Log number of variables (features)
-        print("Logging training information...")
-        print("calling Dataloader...")
         num_fc_features = len(self.datamodule.data_variables) - len(
             self.config.data.forcing
         )
-        print("Dataloader called.")
         LOGGER.info("Total number of prognostic variables: %d", num_fc_features)
         LOGGER.info(
             "Total number of auxiliary variables: %d", len(self.config.data.forcing)
