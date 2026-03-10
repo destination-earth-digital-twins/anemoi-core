@@ -72,7 +72,8 @@ class ProcessConfigs:
                 # If this dict explicitly has dataset=None
                 if obj.get("dataset", self.SENTINEL) is None:
                     # Replace the whole dict content with a deep copy of the replacement
-                    obj.clear()
+                    # obj.clear()
+                    # keep attributes at the end
                     obj.update(replacement.copy())
                 else:
                     # Otherwise, keep traversing deeper
@@ -86,7 +87,7 @@ class ProcessConfigs:
                         and item.get("dataset", self.SENTINEL) is None
                     ):
                         # Replace the entire element if it has dataset=None
-                        obj[i] = replacement.copy()
+                        obj[i].update(replacement.copy())
                     else:
                         recurse(item)
 
