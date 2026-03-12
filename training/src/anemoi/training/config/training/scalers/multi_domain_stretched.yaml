@@ -19,6 +19,8 @@ general_variable:
     2d: 0.5
     tp: 0.025
     cp: 0.0025
+    ssrd: 0
+    strd: 0
 
 pressure_level:
   _target_: anemoi.training.losses.scalers.ReluVariableLevelScaler

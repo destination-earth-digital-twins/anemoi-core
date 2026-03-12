@@ -35,11 +35,11 @@ diagnostics:
     callbacks: []
   checkpoint:
     every_n_minutes:
-      save_frequency: 120
+      save_frequency: 30
       num_models_saved: 1
     every_n_epochs:
-      save_frequency: null
-      num_models_saved: -1
+      save_frequency: 1
+      num_models_saved: 1
 
 data:
   processors:
@@ -47,21 +47,21 @@ data:
       learnable: False
   resolution: None
   forcing:
-  - "cos_latitude"
-  - "cos_longitude"
-  - "sin_latitude"
-  - "sin_longitude"
-  - "cos_julian_day"
-  - "cos_local_time"
-  - "sin_julian_day"
-  - "sin_local_time"
-  - "insolation"
-  - "lsm"
-  - "z"
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+    - "z"
   diagnostic:
-  - "tp"
-  - "ssrd"
-  - "strd"
+    - "tp"
+    - "ssrd"
+    - "strd"
   normalizer:
     max:
     - "z"
@@ -96,8 +96,8 @@ hardware:
     warm_start: null
   num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
   num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
-  num_gpus_per_model: 8
-  num_gpus_per_ensemble: 16
+  num_gpus_per_model: 16
+  num_gpus_per_ensemble: 32
 
 graph:
   overwrite: False
@@ -164,7 +164,14 @@ dataloader:
   
   dataset:
     cutout:
-      - dataset: de330_2025100800_2025101000_1h_HARMONIE_AROME_500m_flooding1_v3.zarr
+      - dataset: null
+        rescale: {
+          "tcc": {"scale": 0.01, "offset": 0}, 
+          "hcc": {"scale": 0.01, "offset": 0}, 
+          "mcc": {"scale": 0.01, "offset": 0}, 
+          "lcc": {"scale": 0.01, "offset": 0},
+          "tp": {"scale": 0.001, "offset": 0}
+          }
       - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/IFS/aifs-od-an-oper-0001-mars-n320-2024-2025-6h-v1.zarr
         drop: [al, cp, latitude, longitude, q_250, q_50, q_600, sdor, slor, sr, stl1, swvl1, t_250, t_50, t_600, tcw, u_250, u_50, u_600, v_250, v_50, v_600, w_250, w_50, w_600, z_250, z_50, z_600]
         reorder: sort
@@ -178,6 +185,7 @@ dataloader:
           reorder: sort
         - dataset: /leonardo_work/DestE_330_25/anemoi/datasets/ERA5/aifs-ea-an-oper-0001-mars-n320-1979-2023-6h-v1-land.zarr
           select: [lcc, mcc, hcc, tcc, strd, ssrd]
+          # select: [lcc, mcc, hcc, tcc]
       adjust: ["start", "end"]
       reorder: sort
 
@@ -192,9 +200,9 @@ model:
     hidden2data: 0
     hidden2hidden: 0
   encoder:
-    num_chunks: 8
+    num_chunks: 16
   decoder:
-    num_chunks: 8
+    num_chunks: 16
   processor:
     num_chunks: 16
   bounding:
@@ -220,7 +228,7 @@ training:
   max_epochs: null
   max_steps: 25000
   lr:
-    rate: 1e-6
+    rate: 1e-5
     min: 3e-7 #3e-7
     warmup: 10
   per_domain_weight_frac_of_total: 0.60 # Try 60 percent # Try dropout 
