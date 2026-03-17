@@ -413,7 +413,6 @@ class GraphConvMapperBlock(GraphConvBaseBlock):
 
         return nodes_new, edges_new
 
-
 class GraphTransformerBaseBlock(BaseBlock, ABC):
     """Message passing block with MLPs for node embeddings."""
 
@@ -470,8 +469,15 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         self.lin_key = Linear(in_channels, num_heads * self.out_channels_conv)
         self.lin_query = Linear(in_channels, num_heads * self.out_channels_conv)
         self.lin_value = Linear(in_channels, num_heads * self.out_channels_conv)
-        self.lin_self = Linear(in_channels, num_heads * self.out_channels_conv, bias=bias)
-        self.lin_edge = Linear(edge_dim, num_heads * self.out_channels_conv)  # , bias=False)
+        self.lin_self = Linear(
+            in_channels, num_heads * self.out_channels_conv, bias=bias
+        )
+        self.lin_edge = Linear(
+            edge_dim, num_heads * self.out_channels_conv
+        )  # , bias=False)
+
+        self.lin_beta = Linear(3 * out_channels, 1, bias=False)
+        #nn.init.constant_(self.lin_beta.weight, 0.0)
 
         self.conv = GraphTransformerConv(out_channels=self.out_channels_conv)
 
@@ -540,7 +546,8 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         edges = shard_heads(edges, shapes=shape_edges, mgroup=model_comm_group)
 
         query, key, value, edges = (
-            einops.rearrange(t, "batch heads grid vars -> (batch grid) heads vars") for t in (query, key, value, edges)
+            einops.rearrange(t, "batch heads grid vars -> (batch grid) heads vars")
+            for t in (query, key, value, edges)
         )
 
         return query, key, value, edges
@@ -561,10 +568,15 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         if num_chunks > 1:
             # split 1-hop edges into chunks, compute self.conv chunk-wise
             edge_attr_list, edge_index_list = sort_edges_1hop_chunks(
-                num_nodes=size, edge_attr=edges, edge_index=edge_index, num_chunks=num_chunks
+                num_nodes=size,
+                edge_attr=edges,
+                edge_index=edge_index,
+                num_chunks=num_chunks,
             )
             # shape: (num_nodes, num_heads, out_channels_conv)
-            out = torch.zeros((*query.shape[:-1], self.out_channels_conv), device=query.device)
+            out = torch.zeros(
+                (*query.shape[:-1], self.out_channels_conv), device=query.device
+            )
             for i in range(num_chunks):
                 out += self.conv(
                     query=query,
@@ -575,7 +587,14 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
                     size=conv_size,
                 )
         else:
-            out = self.conv(query=query, key=key, value=value, edge_attr=edges, edge_index=edge_index, size=conv_size)
+            out = self.conv(
+                query=query,
+                key=key,
+                value=value,
+                edge_attr=edges,
+                edge_index=edge_index,
+                size=conv_size,
+            )
 
         return out
 
@@ -589,9 +608,13 @@ class GraphTransformerBaseBlock(BaseBlock, ABC):
         """Shards Tensor sequence dimension."""
         shape_dst_nodes = shapes[1]
 
-        out = einops.rearrange(out, "(batch grid) heads vars -> batch heads grid vars", batch=batch_size)
+        out = einops.rearrange(
+            out, "(batch grid) heads vars -> batch heads grid vars", batch=batch_size
+        )
         out = shard_sequence(out, shapes=shape_dst_nodes, mgroup=model_comm_group)
-        out = einops.rearrange(out, "batch heads grid vars -> (batch grid) (heads vars)")
+        out = einops.rearrange(
+            out, "batch heads grid vars -> (batch grid) (heads vars)"
+        )
 
         return out
 
@@ -845,20 +868,49 @@ class GraphTransformerProcessorBlock(GraphTransformerBaseBlock):
 
         query, key, value, edges = self.get_qkve(x, edge_attr)
 
-        query, key, value, edges = self.shard_qkve_heads(query, key, value, edges, shapes, batch_size, model_comm_group)
+        query, key, value, edges = self.shard_qkve_heads(
+            query, key, value, edges, shapes, batch_size, model_comm_group
+        )
 
         if self.qk_norm:
             query = self.q_norm(query)
             key = self.k_norm(key)
 
-        num_chunks = self.num_chunks if self.training else NUM_CHUNKS_INFERENCE_PROCESSOR
+        num_chunks = (
+            self.num_chunks if self.training else NUM_CHUNKS_INFERENCE_PROCESSOR
+        )
 
-        out = self.attention_block(query, key, value, edges, edge_index, size, num_chunks)
+        out = self.attention_block(
+            query, key, value, edges, edge_index, size, num_chunks
+        )
 
         out = self.shard_output_seq(out, shapes, batch_size, model_comm_group)
 
         # out = self.projection(out + x_r) in chunks:
-        out = torch.cat([self.projection(chunk) for chunk in torch.tensor_split(out + x_r, num_chunks, dim=0)], dim=0)
+        out_chunks = torch.tensor_split(out, num_chunks, dim=0)
+        x_r_chunks = torch.tensor_split(x_r, num_chunks, dim=0)
+        out_new_chunks = []
+
+        for out_chunk, x_r_chunk in zip(out_chunks, x_r_chunks):
+            beta = torch.sigmoid(
+                self.lin_beta(
+                    torch.cat([out_chunk, x_r_chunk, out_chunk - x_r_chunk], dim=-1)
+                )
+            )
+
+            out_chunk_new = beta * x_r_chunk + (1.0 - beta) * out_chunk
+
+            out_proj = self.projection(out_chunk_new)
+
+            out_new_chunks.append(out_proj)
+        out = torch.cat(out_new_chunks, dim=0)
+        # out = torch.cat(
+        #     [
+        #         self.projection(chunk)
+        #         for chunk in torch.tensor_split(out + x_r, num_chunks, dim=0)
+        #     ],
+        #     dim=0,
+        # )
 
         out = out + x_skip
         nodes_new = self.run_node_dst_mlp(out, **cond_kwargs) + out
