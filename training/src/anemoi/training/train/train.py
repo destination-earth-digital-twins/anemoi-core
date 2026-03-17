@@ -69,6 +69,7 @@ class AnemoiTrainer:
         if config.model.dynamic_mode:
             LOGGER.info("Dynamic mode enabled.")
             hectometric = getattr(config.dataloader, "hectometric", False)
+            config = self.get_processed_configs(config, hectometric=hectometric)
 
 
         if config.config_validation:

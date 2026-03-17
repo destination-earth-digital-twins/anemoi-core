@@ -58,6 +58,8 @@ class IndexCollection:
                 key for key in self.name_to_index if key in self.prognostic or key in self.diagnostic
             )
         }
+        print(f"name_to_index_model_input: {name_to_index_model_input}")
+        print(f"name_to_index_model_output: {name_to_index_model_output}")
         self.data = DataIndex(
             diagnostic=self.diagnostic, forcing=self.forcing, target=self.target, name_to_index=self.name_to_index
         )

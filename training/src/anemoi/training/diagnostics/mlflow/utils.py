@@ -149,7 +149,6 @@ def clean_config_params(params: dict[str, Any]) -> dict[str, Any]:
         "metadata.dataset.specific",
         "metadata.dataset.variables_metadata",
         "de330",
-        "config",
         "metadata.de330",
         "variable_loss_scaling",
         "field_shape"

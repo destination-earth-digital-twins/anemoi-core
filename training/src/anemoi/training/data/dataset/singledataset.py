@@ -124,7 +124,7 @@ class NativeGridDataset(IterableDataset):
                 check_aifs_ds = isinstance(stat_path, str) and "aifs" in stat_path.lower()
             except (KeyError, IndexError, AttributeError):
                 check_aifs_ds = False
-            
+            print("dataset _statistics: ", _statistics)
             if _first_stats and check_aifs_ds:
                 LOGGER.info(
                     (
@@ -188,6 +188,7 @@ class NativeGridDataset(IterableDataset):
             _all_indices = {
                 label : domain.name_to_index for label, domain in self.data.items()
                 } 
+            print("dataset name_to_index: ", _all_indices)
 
             assert all(
                 d == next(iter(_all_indices.values())) for d in _all_indices.values()

@@ -67,15 +67,18 @@ class EnsembleInitialConditions(nn.Module):
         """
         if x_eda is None:
             # no EDA available, just stack the analysis nens_per_device times along an ensemble dimension
-
+            print("No EDA perturbations provided, using analysis only for initial conditions.")
+            print()
             LOGGER.debug("NO EDA -- SHAPES: x_an.shape = %s, multi_step = %d", list(x_an.shape), self.multi_step)
             x_ = x_an[
                 :,
                 0 : self.multi_step,
                 ...,
                 self.data_indices.data.input.full,
-            ]  # (bs, ms, ens_dummy, latlon, nvar)
-
+            ] # (bs, ms, ens_dummy, latlon, nvar)
+            print("multi step: ", self.multi_step)
+            print("number of ens members per device: ", self.nens_per_device)
+            print("Analysis shape after slicing: ", x_.shape)
             return torch.cat([x_] * self.nens_per_device, dim=2)  # shape == (bs, ms, nens_per_device, latlon, nvar)
 
         LOGGER.debug("EDA -- SHAPES: x_an.shape = %s, x_eda.shape = %s", list(x_an.shape), list(x_eda.shape))

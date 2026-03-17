@@ -303,7 +303,7 @@ class GraphEnsForecaster(BaseGraphModule):
         label = None
         if self.dynamic_mode and isinstance(batch, tuple):
             batch, label = batch
-
+        print("label: ", label)
         x = self.ensemble_ic_generator(
             batch[0],
             batch[1] if len(batch) == 2 else None,

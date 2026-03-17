@@ -58,7 +58,10 @@ class KernelCRPS(BaseLoss):
         kCRPS : torch.Tensor
             The point-wise kernel CRPS, shape (batch_size, 1, latlon).
         """
+
         ens_size = preds.shape[-1]
+        print("Preds shape: ", preds.shape)
+        print(preds[0, 0, 0, :])
         mae = torch.mean(torch.abs(targets[..., None] - preds), dim=-1)
 
         assert ens_size > 1, "Ensemble size must be greater than 1."
@@ -69,7 +72,8 @@ class KernelCRPS(BaseLoss):
         for i in range(ens_size):  # loop version to reduce memory usage
             ens_var += torch.sum(torch.abs(preds[..., i].unsqueeze(-1) - preds[..., i + 1 :]), dim=-1)
         ens_var = coef * ens_var
-
+        print("MAE contribution ", mae)
+        print("Ens variance contribution ", ens_var)
         return mae + ens_var
 
     def forward(
@@ -148,6 +152,10 @@ class AlmostFairKernelCRPS(BaseLoss):
             The point-wise kernel CRPS, shape (batch_size, 1, latlon).
         """
         ens_size = preds.shape[-1]
+        print("Preds shape: ", preds.shape)
+        print(preds[0, 0, 0, :])
+        print("Targets shape: ", targets.shape)
+        print(targets[0, 0, 0])
 
         epsilon = (1.0 - alpha) / ens_size
 
@@ -158,13 +166,34 @@ class AlmostFairKernelCRPS(BaseLoss):
             "batch var latlon ens -> batch var latlon n ens",
             n=ens_size,
         )
-
+        print("STRD AVG PREDICTION member 0: ", torch.mean(preds[:,21,:,0]))
+        print("STRD AVG PREDICTION member 1: ", torch.mean(preds[:,21,:,1]))
+        print("STRD AVG TARGET: ", torch.mean(targets[:,21,:]))
+        print("STRD MAE ERROR member 0: ", torch.abs(preds[:,21,:,0] - targets[:,21,:]).mean())
+        print("STRD MAE ERROR member 1: ", torch.abs(preds[:,21,:,1] - targets[:,21,:]).mean())
+        print('SSRD AVG PREDICTION member 0: ', torch.mean(preds[:,22,:,0]))
+        print('SSRD AVG PREDICTION member 1: ', torch.mean(preds[:,22,:,1]))
+        print('SSRD AVG TARGET: ', torch.mean(targets[:,22,:]))
+        print('SSRD MAE ERROR member 0: ', torch.abs(preds[:,22,:,0] - targets[:,22,:]).mean())
+        print('SSRD MAE ERROR member 1: ', torch.abs(preds[:,22,:,1] - targets[:,22,:]).mean())
+        print('SURFACE PRESSURE member 0: ', torch.mean(preds[:,20,:,0]))
+        print('SURFACE PRESSURE member 1: ', torch.mean(preds[:,20,:,1]))
+        print('SURFACE PRESSURE TARGET: ', torch.mean(targets[:,20,:]))
+        print('SURFACE PRESSURE MAE ERROR member 0: ', torch.abs(preds[:,20,:,0] - targets[:,20,:]).mean())
+        print('SURFACE PRESSURE MAE ERROR member 1: ', torch.abs(preds[:,20,:,1] - targets[:,20,:]).mean())
         mem_err = err_r * ~diag
         mem_err_transpose = mem_err.transpose(-1, -2)
-
+        print("err_r size: ", err_r.shape)
+        print("err variable mean: ", torch.mean(err_r, dim=(0, 2, 3, 4)))
+        print("mem_err size: ", mem_err.shape)
+        print("mem_err mean: ", torch.mean(mem_err))
+        print("mem_err variable mean: ", torch.mean(mem_err, dim=(0, 2, 3, 4)))
+        print("var mean: ", torch.mean(var))
         assert ens_size > 1, "Ensemble size must be greater than 1."
 
         coef = 1.0 / (2.0 * ens_size * (ens_size - 1))
+        print("coef: ", coef)
+        print("epsilon: ", epsilon)
         return coef * torch.sum(mem_err + mem_err_transpose - (1 - epsilon) * var, dim=(-1, -2))
 
     def forward(
@@ -173,7 +202,7 @@ class AlmostFairKernelCRPS(BaseLoss):
         y_target: torch.Tensor,
         squash: bool = True,
         *,
-        scaler_indices: tuple[int, ...] | None = None,
+ scaler_indices: tuple[int, ...] | None = None,
         without_scalers: list[str] | list[int] | None = None,
         grid_shard_slice: slice | None = None,
         group: ProcessGroup | None = None,
@@ -188,12 +217,12 @@ class AlmostFairKernelCRPS(BaseLoss):
                 kcrps_ = self._kernel_crps(y_pred, y_target, alpha=self.alpha)
         else:
             kcrps_ = self._kernel_crps(y_pred, y_target, alpha=self.alpha)
-
         kcrps_ = einops.rearrange(kcrps_, "bs v latlon -> bs 1 latlon v")
         kcrps_ = self.scale(kcrps_, scaler_indices, without_scalers=without_scalers, grid_shard_slice=grid_shard_slice)
-
+        print("Loss contribution from kernel CRPS: ", self.reduce(kcrps_, squash=squash, squash_mode="sum", group=group if is_sharded else None))
         return self.reduce(kcrps_, squash=squash, squash_mode="sum", group=group if is_sharded else None)
 
     @property
     def name(self) -> str:
         return f"afkcrps{self.alpha:.2f}"
+       

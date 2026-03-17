@@ -376,6 +376,7 @@ class AFCRPSFFTLoss(AlmostFairKernelCRPS):
 
         kcrps_ = einops.rearrange(kcrps_, "bs v latlon -> bs 1 latlon v")
         scaled = self.scale(kcrps_, scaler_indices, without_scalers=without_scalers)
+        print("loss contribution from FFT", scaled.mean())
         return scaled.mean()
 
     @property

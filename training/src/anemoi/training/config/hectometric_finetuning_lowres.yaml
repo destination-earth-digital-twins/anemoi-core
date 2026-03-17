@@ -24,7 +24,7 @@ diagnostics:
       authentication: True
       tracking_uri: https://mlflow.ecmwf.int
       experiment_name: 'multi-domain-experiments'
-      run_name: hecto_ref
+      run_name: hecto_lowres
       system: False
       terminal: False
       max_params_length: 16000
@@ -88,7 +88,7 @@ hardware:
     logs: 
       base: /leonardo_work/DestE_340_26/users/sbuurman/multi-domain-training/output/logs/
       mlflow: ${hardware.paths.logs.base}mlflow/
-    graph: /leonardo_work/DestE_340_26/users/sbuurman/graphs/hectometric/
+    graph: /leonardo_work/DestE_340_26/users/sbuurman/graphs/hectometric/res6_10
     warm_start: null
   files:
     dataset: null
@@ -104,8 +104,8 @@ graph:
   nodes:
     hidden:
       node_builder:
-        lam_resolution: 12
-        global_resolution: 7
+        lam_resolution: 10
+        global_resolution: 6
         margin_radius_km: 20
 
 dataloader:
@@ -135,8 +135,8 @@ dataloader:
     validation: 1
     test: 1
   num_workers:
-    training: 4
-    validation: 4
+    training: 1 #1
+    validation: 1 #1
     test: 1
     predict: 1
   limit_batches:
@@ -156,7 +156,7 @@ dataloader:
   hectometric: True
   # hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_mini.txt
   # hectometric_dataset_training: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/anemoi-core/test_hectometric/training_graphs.txt
-  hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_1.txt
+  hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_3.txt
   hectometric_dataset_validation: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_mini.txt
   # hectometric_dataset_validation: /leonardo_work/DestE_340_26/users/sbuurman/multi-domain-training/anemoi-core/test_hectometric/hectometric_mini_val.txt
 
@@ -227,7 +227,7 @@ training:
   transfer_learning: True
   load_weights_only: True
   max_epochs: null
-  max_steps: 25000
+  max_steps: 9000
   lr:
     rate: 1e-5
     min: 3e-7 #3e-7
@@ -242,13 +242,13 @@ training:
         t: 6   #1
         u: 0.8 #0.5
         v: 0.5 #0.33
-        w: 0.001
+        w: 0.005
         z: 12  #1
         sp: 10
         10u: 0.1
         10v: 0.1
         2d: 0.5
-        tp: 0.025
+        tp: 0.05
         cp: 0.0025
         ssrd: 0
         strd: 0
@@ -262,4 +262,4 @@ training:
         alpha: 0.95
         scalers: ['pressure_level', 'general_variable', 'nan_mask_weights']
     scalers: ['*']
-    loss_weights: [1.0, 0.1]
+    loss_weights: [1.0, 1.0]
