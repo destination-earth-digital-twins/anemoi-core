@@ -138,8 +138,11 @@ class GraphTransformerConv(MessagePassing):
             key_j = key_j + edge_attr
 
         alpha = (query_i * key_j).sum(dim=-1) / self.out_channels**0.5
-
         alpha = softmax(alpha, index, ptr, size_i)
         alpha = dropout(alpha, p=self.dropout, training=self.training)
 
-        return (value_j + edge_attr) * alpha.view(-1, heads, 1)
+        out = value_j
+        if edge_attr is not None:
+            out = out + edge_attr
+
+        return out * alpha.view(-1, heads, 1)
