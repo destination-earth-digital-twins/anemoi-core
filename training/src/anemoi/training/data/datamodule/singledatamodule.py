@@ -125,12 +125,15 @@ class AnemoiDatasetsDataModule(pl.LightningDataModule):
                 domain : _data.variables for domain, _data in self.ds_train.data.items()
             }
             
+            if not data_vars:
+                raise ValueError("No training domains found.")
+
             first_vars = next(iter(data_vars.values()))
             assert all(vars_ == first_vars for vars_ in data_vars.values()), (
                 f"Variable sets do not match across domains!\n"
                 f"{ {k: sorted(v) for k, v in data_vars.items()} }"
             )
-            return data_vars
+            return first_vars
 
         return self.ds_train.data.variables
 
