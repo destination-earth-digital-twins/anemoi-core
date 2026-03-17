@@ -247,13 +247,15 @@ class BasePerBatchPlotCallback(BasePlotCallback):
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
         output: list[torch.Tensor],
-        batch: torch.Tensor,
+        batch: torch.Tensor | tuple[torch.Tensor, str],
         batch_idx: int,
         **kwargs,
     ) -> None:
         if batch_idx % self.every_n_batches == 0:
             # gather tensors if necessary
-            batch = pl_module.allgather_batch(batch)
+            if isinstance(batch, tuple) and len(batch)==2:
+                batch, domain = batch
+            batch = pl_module.allgather_batch(batch,domain)
             # output: [loss, [pred1, pred2, ...]], gather predictions for plotting
             output = [output[0], [pl_module.allgather_batch(pred) for pred in output[1]]]
 
@@ -912,11 +914,12 @@ class PlotLoss(BasePerBatchPlotCallback):
         batch: torch.Tensor,
         batch_idx: int,
     ) -> None:
-
+        print(len(batch), type(batch), type(batch[1]), batch[1])
         if batch_idx % self.every_n_batches == 0:
 
             self.loss = copy.deepcopy(pl_module.loss)
-
+            if isinstance(batch, tuple) and len(batch)==2:
+                self.loss = self.loss[batch[-1]]
             # gather nan-mask weight shards, don't gather if constant in grid dimension (broadcastable)
             if (
                 hasattr(self.loss.scaler, "nan_mask_weights")
