@@ -156,7 +156,7 @@ dataloader:
   hectometric: True
   # hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_mini.txt
   # hectometric_dataset_training: /leonardo_work/DestE_330_25/users/sbuurman/multi-domain-training/anemoi-core/test_hectometric/training_graphs.txt
-  hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_3.txt
+  hectometric_dataset_training: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_1.txt
   hectometric_dataset_validation: /leonardo_work/DestE_340_26/users/sbuurman/temp/anemoi-core/test_hectometric/hectometric_mini.txt
   # hectometric_dataset_validation: /leonardo_work/DestE_340_26/users/sbuurman/multi-domain-training/anemoi-core/test_hectometric/hectometric_mini_val.txt
 
@@ -221,8 +221,9 @@ model:
       max_val: 1
 
 training:
-  run_id: 467ff6a23a454a338838b3246b520d11
-  fork_run_id: null
+  run_id: 
+  #467ff6a23a454a338838b3246b520d11
+  fork_run_id: 1f404692ab324b3b98c9c4f86274814f
   #51e225bccd9143f9bf12ed251a8f00ed
   transfer_learning: True
   load_weights_only: True

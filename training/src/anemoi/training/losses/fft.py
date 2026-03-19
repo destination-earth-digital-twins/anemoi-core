@@ -351,9 +351,12 @@ class AFCRPSFFTLoss(AlmostFairKernelCRPS):
         assert not is_sharded, "Set 'keep_batch_sharded=False' in the model config to compute spectral loss"
 
         bs_ = y_pred.shape[0]  # batch size
-
+        print("y_pred shape:", y_pred.shape)
         y_pred_regional = y_pred[:, :, :self.len_reg]
         y_target_regional = y_target[:, :self.len_reg]
+
+        tp_idx = 22
+        y_pred_regional[:,33,:] = 0
         
         y_pred_regional = einops.rearrange(
                 y_pred_regional,
@@ -376,6 +379,7 @@ class AFCRPSFFTLoss(AlmostFairKernelCRPS):
 
         kcrps_ = einops.rearrange(kcrps_, "bs v latlon -> bs 1 latlon v")
         scaled = self.scale(kcrps_, scaler_indices, without_scalers=without_scalers)
+        scaled[:, :, :, 33] = 0
         print("loss contribution from FFT", scaled.mean())
         return scaled.mean()
 
