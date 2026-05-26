@@ -89,19 +89,23 @@ def create_stretched_tri_nodes(
     # Get the low resolution nodes outside the AOI
     base_coords_rad = get_latlon_coords_icosphere(base_resolution)
     base_area_mask = ~area_mask_builder.get_mask(base_coords_rad)
+    base_hidden_mask = np.zeros(base_area_mask.sum(), dtype=bool)
 
     # Get the high resolution nodes inside the AOI
     lam_coords_rad = get_latlon_coords_icosphere(lam_resolution)
     lam_area_mask = area_mask_builder.get_mask(lam_coords_rad)
+    lam_hidden_mask = np.ones(lam_area_mask.sum(), dtype=bool)
 
     coords_rad = np.concatenate([base_coords_rad[base_area_mask], lam_coords_rad[lam_area_mask]])
+    hidden_cutout_mask = np.concatenate([base_hidden_mask, lam_hidden_mask])
 
     node_ordering = get_coordinates_ordering(coords_rad)
-
+    hidden_cutout_mask = hidden_cutout_mask[node_ordering]
+    
     # Creates the graph, with the nodes sorted by latitude and longitude.
     nx_graph = create_nx_graph_from_tri_coords(coords_rad, node_ordering)
 
-    return nx_graph, coords_rad, list(node_ordering)
+    return nx_graph, coords_rad, list(node_ordering), hidden_cutout_mask
 
 
 def get_latlon_coords_icosphere(resolution: int) -> np.ndarray:
@@ -122,12 +126,17 @@ def get_latlon_coords_icosphere(resolution: int) -> np.ndarray:
     return coords_rad
 
 
-def create_nx_graph_from_tri_coords(coords_rad: np.ndarray, node_ordering: np.ndarray) -> nx.DiGraph:
+def create_nx_graph_from_tri_coords(coords_rad: np.ndarray, node_ordering: np.ndarray, hidden_cutout_mask: np.ndarray | None = None) -> nx.DiGraph:
     """Creates the networkx graph from the coordinates and the node ordering."""
     graph = nx.DiGraph()
     for i, coords in enumerate(coords_rad[node_ordering]):
         node_id = node_ordering[i]
-        graph.add_node(node_id, hcoords_rad=coords)
+        attrs = {"hcoords_rad": coords}
+
+        if hidden_cutout_mask is not None:
+            attrs["hidden_cutout_mask"] = hidden_cutout_mask[i]
+
+        graph.add_node(node_id, **attrs)
 
     assert list(graph.nodes.keys()) == list(node_ordering), "Nodes are not correctly added to the graph."
     assert graph.number_of_nodes() == len(node_ordering), "The number of nodes must be the same."
