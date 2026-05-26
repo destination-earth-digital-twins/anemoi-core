@@ -43,22 +43,30 @@ class BaseEdgeAttributeBuilder(MessagePassing, NormaliserMixin, ABC):
             error_msg = f"Class {self.__class__.__name__} must define 'node_attr_name' either as a class attribute or in __init__"
             raise TypeError(error_msg)
 
-    def subset_node_information(self, source_nodes: NodeStorage, target_nodes: NodeStorage) -> PairTensor:
+    def subset_node_information(
+        self, source_nodes: NodeStorage, target_nodes: NodeStorage
+    ) -> PairTensor:
         if self.node_attr_name in source_nodes:
             source_nodes_data = source_nodes[self.node_attr_name].to(self.device)
         else:
             source_nodes_data = None
-            LOGGER.warning("The attribute %s is not in the source nodes.", self.node_attr_name)
+            LOGGER.warning(
+                "The attribute %s is not in the source nodes.", self.node_attr_name
+            )
 
         if self.node_attr_name in target_nodes:
             target_nodes_data = target_nodes[self.node_attr_name].to(self.device)
         else:
             target_nodes_data = None
-            LOGGER.warning("The attribute %s is not in the target nodes.", self.node_attr_name)
+            LOGGER.warning(
+                "The attribute %s is not in the target nodes.", self.node_attr_name
+            )
 
         return source_nodes_data, target_nodes_data
 
-    def forward(self, x: tuple[NodeStorage, NodeStorage], edge_index: Adj, size: Size = None) -> torch.Tensor:
+    def forward(
+        self, x: tuple[NodeStorage, NodeStorage], edge_index: Adj, size: Size = None
+    ) -> torch.Tensor:
         x = self.subset_node_information(*x)
         return self.propagate(edge_index, x=x, size=size)
 
@@ -73,7 +81,9 @@ class BaseEdgeAttributeBuilder(MessagePassing, NormaliserMixin, ABC):
 
         return edge_features
 
-    def aggregate(self, edge_features: torch.Tensor, index: torch.Tensor, ptr=None, dim_size=None) -> torch.Tensor:
+    def aggregate(
+        self, edge_features: torch.Tensor, index: torch.Tensor, ptr=None, dim_size=None
+    ) -> torch.Tensor:
         return self.normalise(edge_features, index, dim_size)
 
 
@@ -128,7 +138,9 @@ class Azimuth(BasePositionalBuilder):
             * torch.cos(x_j[..., self._idx_lon] - x_i[..., self._idx_lon])
         )
         a1 = a11 - a12
-        a2 = torch.sin(x_j[..., self._idx_lon] - x_i[..., self._idx_lon]) * torch.cos(x_j[:, self._idx_lat])
+        a2 = torch.sin(x_j[..., self._idx_lon] - x_i[..., self._idx_lon]) * torch.cos(
+            x_j[:, self._idx_lat]
+        )
         edge_dirs = torch.atan2(a2, a1)
 
         return edge_dirs
@@ -150,7 +162,9 @@ class BaseEdgeAttributeFromNodeBuilder(BaseBooleanEdgeAttributeBuilder, ABC):
         self.node_attr_name = node_attr_name
         super().__init__()
         if self.nodes_axis is None:
-            raise AttributeError(f"{self.__class__.__name__} class must set 'nodes_axis' attribute.")
+            raise AttributeError(
+                f"{self.__class__.__name__} class must set 'nodes_axis' attribute."
+            )
 
     def compute(self, x_i: torch.Tensor, x_j: torch.Tensor) -> torch.Tensor:
         node_attr = (x_j, x_i)[self.nodes_axis.value]
@@ -170,6 +184,34 @@ class AttributeFromTargetNode(BaseEdgeAttributeFromNodeBuilder):
     """Copy an attribute of the target node to the edge."""
 
     nodes_axis = NodesAxis.TARGET
+
+
+class GridInteraction(BaseEdgeAttributeBuilder):
+    node_attr_name = "unused"
+
+    def __init__(
+        self,
+        source_node_attr_name: str,
+        target_node_attr_name: str,
+        norm: str | None = None,
+        dtype: str = "float32",
+    ) -> None:
+        self.source_node_attr_name = source_node_attr_name
+        self.target_node_attr_name = target_node_attr_name
+        super().__init__(norm=norm, dtype=dtype)
+
+    def subset_node_information(self, source_nodes, target_nodes):
+        source_data = source_nodes[self.source_node_attr_name].to(self.device)
+        target_data = target_nodes[self.target_node_attr_name].to(self.device)
+        return source_data, target_data
+
+    def compute(self, x_i: torch.Tensor, x_j: torch.Tensor) -> torch.Tensor:
+        source = x_j.squeeze(-1).long()
+        target = x_i.squeeze(-1).long()
+
+        edge_type = source * 2 + target
+
+        return torch.nn.functional.one_hot(edge_type, num_classes=4).float()
 
 
 class GaussianDistanceWeights(EdgeLength):
