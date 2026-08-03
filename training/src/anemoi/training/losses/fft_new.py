@@ -406,7 +406,6 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
             scaler_indices,
             without_scalers=without_scalers,
         )
-        print(scaled.mean())
         return scaled.mean()
 
     @property
