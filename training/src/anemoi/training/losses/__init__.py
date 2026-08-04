@@ -19,6 +19,7 @@ from .rmse import RMSELoss
 from .weighted_mse import WeightedMSELoss
 from .fft import AFCRPSFFTLoss, CRPSFFTLoss
 from .fft_new import AFCRPSFFTLossNew
+from .regional_variogram import RegionalVariogramScore
 
 __all__ = [
     "AlmostFairKernelCRPS",
@@ -34,4 +35,5 @@ __all__ = [
     "AFCRPSFFTLoss",
     "CRPSFFTLoss",
     "AFCRPSFFTLossNew",
+    "RegionalVariogramScore",
 ]
