@@ -320,7 +320,11 @@ class BaseGraphModule(pl.LightningModule, ABC):
                 **extra_kwargs
                 ),
             self.scalers,
-            extra_kwargs=self.field_shape if self.field_shape is not None else {}
+            extra_kwargs=(
+                    {"field_shape": self.field_shape}
+                    if self.field_shape is not None
+                    else {}
+                )
             )
         
         self._scaling_values_log = self._mapper(
