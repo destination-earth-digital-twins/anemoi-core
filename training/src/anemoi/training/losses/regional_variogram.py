@@ -76,11 +76,12 @@ class RegionalVariogramScore(BaseLoss):
         ignore_nans:
             Ignore pairs containing NaNs or infinities.
         """
+        
         super().__init__(
             ignore_nans=ignore_nans,
             **kwargs,
         )
-
+        self.ignore_nans = ignore_nans
         # Supports tuples, lists, and Hydra/OmegaConf ListConfig.
         try:
             field_shape = tuple(field_shape)
@@ -276,12 +277,11 @@ class RegionalVariogramScore(BaseLoss):
         )
 
     def _variogram_score(
-        self,
-        preds: torch.Tensor,
-        targets: torch.Tensor,
+    self,
+    preds: torch.Tensor,
+    targets: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Calculate the sampled regional variogram score.
+        """Calculate a nodewise regional variogram score.
 
         Parameters
         ----------
@@ -294,39 +294,42 @@ class RegionalVariogramScore(BaseLoss):
         Returns
         -------
         torch.Tensor
-            Shape ``(batch, variable)``.
+            Nodewise score with shape
+            ``(batch, variable, y, x)``.
         """
-        if preds.shape[-2:] != (self.ydim, self.xdim):
+        expected_shape = (self.ydim, self.xdim)
+
+        if preds.shape[-2:] != expected_shape:
             raise ValueError(
                 "Prediction spatial shape does not match field_shape: "
-                f"got {tuple(preds.shape[-2:])}, expected "
-                f"{(self.ydim, self.xdim)}."
+                f"got {tuple(preds.shape[-2:])}, expected {expected_shape}."
             )
 
-        if targets.shape[-2:] != (self.ydim, self.xdim):
+        if targets.shape[-2:] != expected_shape:
             raise ValueError(
                 "Target spatial shape does not match field_shape: "
-                f"got {tuple(targets.shape[-2:])}, expected "
-                f"{(self.ydim, self.xdim)}."
+                f"got {tuple(targets.shape[-2:])}, expected {expected_shape}."
             )
 
+        # Variogram calculations are safer in float32 under mixed precision.
         preds = preds.float()
         targets = targets.float()
 
         batch_size = preds.shape[0]
         n_variables = preds.shape[1]
 
-        total_score = torch.zeros(
-            (batch_size, n_variables),
+        score_sum = torch.zeros(
+            (
+                batch_size,
+                n_variables,
+                self.ydim,
+                self.xdim,
+            ),
             device=preds.device,
             dtype=preds.dtype,
         )
 
-        total_weight = torch.zeros(
-            (batch_size, n_variables),
-            device=preds.device,
-            dtype=preds.dtype,
-        )
+        weight_sum = torch.zeros_like(score_sum)
 
         offset_weights = self.offset_weights.to(
             device=preds.device,
@@ -342,13 +345,11 @@ class RegionalVariogramScore(BaseLoss):
             ya, xa = slices_a
             yb, xb = slices_b
 
-            # Prediction pair differences:
-            # (batch, variable, ensemble, pair_y, pair_x)
+            # [B, V, E, pair_y, pair_x]
             pred_a = preds[..., ya, xa]
             pred_b = preds[..., yb, xb]
 
-            # Target pair differences:
-            # (batch, variable, pair_y, pair_x)
+            # [B, V, pair_y, pair_x]
             target_a = targets[..., ya, xa]
             target_b = targets[..., yb, xb]
 
@@ -382,7 +383,6 @@ class RegionalVariogramScore(BaseLoss):
                 posinf=0.0,
                 neginf=0.0,
             )
-
             target_a = torch.nan_to_num(
                 target_a,
                 nan=0.0,
@@ -396,64 +396,65 @@ class RegionalVariogramScore(BaseLoss):
                 neginf=0.0,
             )
 
-            # Ensemble-mean predicted variogram increment.
+            # Ensemble expectation:
+            #
+            # E_F |X_i - X_j|^p
+            #
+            # [B, V, E, pair_y, pair_x]
+            #     -> mean over E
+            # [B, V, pair_y, pair_x]
             pred_increment = (
-                pred_a - pred_b
-            ).abs().pow(
-                self.variogram_power
-            ).mean(
-                dim=2
+                (pred_a - pred_b)
+                .abs()
+                .pow(self.variogram_power)
+                .mean(dim=2)
             )
 
             observed_increment = (
-                target_a - target_b
-            ).abs().pow(
-                self.variogram_power
+                (target_a - target_b)
+                .abs()
+                .pow(self.variogram_power)
             )
 
             pair_error = (
                 observed_increment - pred_increment
             ).square()
 
-            pair_valid_float = pair_valid.to(
-                dtype=pair_error.dtype
-            )
-
-            valid_count = pair_valid_float.sum(
-                dim=(-2, -1)
-            )
-
-            offset_score = (
-                pair_error * pair_valid_float
-            ).sum(
-                dim=(-2, -1)
-            ) / valid_count.clamp_min(1.0)
-
-            sample_has_valid_pairs = valid_count > 0
+            valid_weight = pair_valid.to(pair_error.dtype)
 
             offset_weight = offset_weights[offset_index]
 
-            total_score = (
-                total_score
-                + offset_weight
-                * offset_score
-                * sample_has_valid_pairs
+            weighted_error = (
+                offset_weight
+                * pair_error
+                * valid_weight
             )
 
-            total_weight = (
-                total_weight
-                + offset_weight
-                * sample_has_valid_pairs
+            weighted_valid = (
+                offset_weight
+                * valid_weight
             )
 
-        if bool((total_weight <= 0).any()):
-            raise ValueError(
-                "At least one batch-variable sample has no valid "
-                "variogram pairs."
-            )
+            # Assign half of each pair score to each endpoint.
+            #
+            # This keeps the variogram loss represented on the original grid
+            # and treats both endpoints symmetrically.
+            score_sum[..., ya, xa] += 0.5 * weighted_error
+            score_sum[..., yb, xb] += 0.5 * weighted_error
 
-        return total_score / total_weight.clamp_min(1.0e-12)
+            weight_sum[..., ya, xa] += 0.5 * weighted_valid
+            weight_sum[..., yb, xb] += 0.5 * weighted_valid
 
+        has_valid_pair = weight_sum > 0
+
+        nodewise_score = torch.where(
+            has_valid_pair,
+            score_sum / weight_sum.clamp_min(1.0e-12),
+            torch.zeros_like(score_sum),
+        )
+
+        return nodewise_score
+        
     def forward(
         self,
         y_pred: torch.Tensor,
@@ -465,7 +466,6 @@ class RegionalVariogramScore(BaseLoss):
         grid_shard_slice: slice | None = None,
         group: ProcessGroup | None = None,
     ) -> torch.Tensor:
-        del squash, group
 
         if grid_shard_slice is not None:
             raise AssertionError(
@@ -535,18 +535,35 @@ class RegionalVariogramScore(BaseLoss):
 
         # Match Anemoi's common loss/scaler layout:
         # (batch, variable) -> (batch, 1, 1, variable)
+        score = self._variogram_score(
+            y_pred_regional,
+            y_target_regional,
+        )
+
+        # [B, V, Y, X] -> [B, 1, Y*X, V]
         score = einops.rearrange(
             score,
-            "bs v -> bs 1 1 v",
+            "bs v y x -> bs 1 (y x) v",
         )
+
+        # The loss contains only the first len_reg regional nodes.
+        # Slice grid-dependent scalers to the same regional portion.
+        regional_grid_slice = slice(0, self.len_reg)
 
         scaled = self.scale(
             score,
             scaler_indices,
             without_scalers=without_scalers,
+            grid_shard_slice=regional_grid_slice,
         )
-
-        return scaled.mean()
+        val = self.reduce(
+            scaled,
+            squash=squash,
+            group=None,
+        )
+        print(f"inside regional_variogram.py: val = {val}")
+        return val
+            
 
     @property
     def name(self) -> str:
