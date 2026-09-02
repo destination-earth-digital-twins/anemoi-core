@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import einops
 import torch
 from torch.distributed.distributed_c10d import ProcessGroup
-
+import torch.nn.functional as F
 from anemoi.training.losses.base import BaseLoss
 
 LOGGER = logging.getLogger(__name__)
@@ -277,9 +277,9 @@ class RegionalVariogramScore(BaseLoss):
         )
 
     def _variogram_score(
-    self,
-    preds: torch.Tensor,
-    targets: torch.Tensor,
+        self,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
     ) -> torch.Tensor:
         """Calculate a nodewise regional variogram score.
 
@@ -297,6 +297,11 @@ class RegionalVariogramScore(BaseLoss):
             Nodewise score with shape
             ``(batch, variable, y, x)``.
         """
+        if not torch.isfinite(preds).all():
+            raise FloatingPointError("Non-finite prediction entering variogram loss")
+
+        if not torch.isfinite(targets).all():
+            raise FloatingPointError("Non-finite target entering variogram loss")
         expected_shape = (self.ydim, self.xdim)
 
         if preds.shape[-2:] != expected_shape:
@@ -403,22 +408,33 @@ class RegionalVariogramScore(BaseLoss):
             # [B, V, E, pair_y, pair_x]
             #     -> mean over E
             # [B, V, pair_y, pair_x]
+            eps = 1.0e-6
+
+            pred_diff = pred_a.float() - pred_b.float()
+            target_diff = target_a.float() - target_b.float()
+
             pred_increment = (
-                (pred_a - pred_b)
-                .abs()
-                .pow(self.variogram_power)
-                .mean(dim=2)
-            )
+                pred_diff.square() + eps
+            ).pow(
+                self.variogram_power / 2.0
+            ).mean(dim=2)
 
             observed_increment = (
-                (target_a - target_b)
-                .abs()
-                .pow(self.variogram_power)
+                target_diff.square() + eps
+            ).pow(
+                self.variogram_power / 2.0
             )
 
-            pair_error = (
-                observed_increment - pred_increment
-            ).square()
+            variogram_residual = (
+                pred_increment - observed_increment
+            )
+
+            pair_error = F.smooth_l1_loss(
+                variogram_residual,
+                torch.zeros_like(variogram_residual),
+                reduction="none",
+                beta=0.5 #huber_beta,
+            )
 
             valid_weight = pair_valid.to(pair_error.dtype)
 
@@ -535,19 +551,19 @@ class RegionalVariogramScore(BaseLoss):
 
         # Match Anemoi's common loss/scaler layout:
         # (batch, variable) -> (batch, 1, 1, variable)
-        score = self._variogram_score(
-            y_pred_regional,
-            y_target_regional,
-        )
 
+        # score = self._variogram_score(
+        #     y_pred_regional,
+        #     y_target_regional,
+        # )
+
+        # [B, V, Y, X] -> [B, 1, Y*X, V]
         # [B, V, Y, X] -> [B, 1, Y*X, V]
         score = einops.rearrange(
             score,
             "bs v y x -> bs 1 (y x) v",
         )
 
-        # The loss contains only the first len_reg regional nodes.
-        # Slice grid-dependent scalers to the same regional portion.
         regional_grid_slice = slice(0, self.len_reg)
 
         scaled = self.scale(
@@ -556,12 +572,14 @@ class RegionalVariogramScore(BaseLoss):
             without_scalers=without_scalers,
             grid_shard_slice=regional_grid_slice,
         )
-        val = self.reduce(
-            scaled,
-            squash=squash,
-            group=None,
-        )
-        print(f"inside regional_variogram.py: val = {val}")
+
+        # Match AFCRPS / FFT reduction:
+        # sum variables, average spatial dimension, average batch
+        scaled = scaled.sum(dim=-1)
+        scaled = scaled.mean(dim=-1)
+
+        val = scaled.mean()
+        print(f"Regional variogram score: {val.item():.6f}")
         return val
             
 

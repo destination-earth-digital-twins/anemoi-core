@@ -21,12 +21,13 @@ from anemoi.training.losses.kcrps import AlmostFairKernelCRPS
 LOGGER = logging.getLogger(__name__)
 
 
-class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
+class AFCRPSFFTLossNew2(AlmostFairKernelCRPS):
     """Almost-fair kernel CRPS computed on local Fourier coefficients."""
 
     def __init__(
         self,
         field_shape: tuple[int, int],
+        grid_spacing: float,
         cutoff_ratio: float = 1.0,
         alpha: float = 1.0,
         local: int = 1,
@@ -34,6 +35,7 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
         ignore_nans: bool = False,
         frequency_beta: float = 2.0,
         frequency_power: float = 1.5,
+        tail_start_km: float = 10.0,
         apply_window: bool = True,
         apply_frequency_weight: bool = True,
         **kwargs,
@@ -43,6 +45,11 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
         ----------
         field_shape:
             Spatial field shape ``(ydim, xdim)``.
+        grid_spacing:
+            The grid spacing in the spatial domain. This is used to compute the
+            radial frequency weighting. For example, if the grid spacing is grid_spacing=1 km, 
+            then the Nyquist frequency is 0.5 cycles/km, 
+            and a cutoff_ratio of 0.5 would retain frequencies up. 
         cutoff_ratio:
             Fraction of the maximum radial frequency to retain. Must be in
             ``(0, 1]``.
@@ -60,6 +67,9 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
             uniform weighting.
         frequency_power:
             Exponent used in the radial frequency weight.
+        tail_start_km:
+            The radial frequency (in km) at which the frequency weight starts
+            to increase. This is used to compute the frequency weight.
         apply_window:
             Apply an energy-normalized Hann window to each patch.
         apply_frequency_weight:
@@ -78,6 +88,14 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
             )
 
         ydim, xdim = field_shape
+
+        assert isinstance(grid_spacing, float) and grid_spacing > 0.0, (
+            f"grid_spacing must be a positive float, got {grid_spacing!r}."
+        )
+
+        assert isinstance(tail_start_km, float) and tail_start_km > 0.0, (
+            f"tail_start_km must be a positive float, got {tail_start_km!r}."
+        )
 
         if not isinstance(ydim, int) or ydim <= 0:
             raise ValueError(f"ydim must be a positive integer, got {ydim!r}.")
@@ -122,16 +140,18 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
         self.no_autocast = no_autocast
         self.apply_window = apply_window
         self.apply_frequency_weight = apply_frequency_weight
-        self.transform = torch.fft.rfft2
+        self.transform = torch.fft.fft2
 
         self.register_buffer(
             "frequency_weight",
             self.frequency_weight_2d(
                 nx=self.xdim_local,
                 ny=self.ydim_local,
+                grid_spacing=grid_spacing,
                 beta=frequency_beta,
                 power=frequency_power,
                 cutoff_ratio=cutoff_ratio,
+                tail_start_km=tail_start_km
             ),
         )
 
@@ -165,9 +185,11 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
     def frequency_weight_2d(
         nx: int,
         ny: int,
+        grid_spacing: float,
         beta: float = 1.0,
         power: float = 2.0,
         cutoff_ratio: float = 1.0,
+        tail_start_km: float = 10.0,
     ) -> torch.Tensor:
         """Construct radial weights matching an ``rfft2`` output.
 
@@ -177,16 +199,34 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
 
         Only the final dimension uses ``rfftfreq``.
         """
-        fy = torch.fft.fftfreq(ny)
-        fx = torch.fft.rfftfreq(nx)
+        fy = torch.fft.fftfreq(ny,d=grid_spacing)
+        fx = torch.fft.fftfreq(nx,d=grid_spacing)
 
         ky, kx = torch.meshgrid(fy, fx, indexing="ij")
         radius = torch.sqrt(kx.square() + ky.square())
 
+
+
         max_radius = radius.max().clamp_min(1e-8)
         normalized_radius = radius / max_radius
 
-        weight = 1.0 + beta * normalized_radius.pow(power)
+        base_weight = 1.0 + beta * normalized_radius.pow(power)
+
+        tail_start_k = 1.0/tail_start_km
+        tail_full_k = 2.0*tail_start_k
+
+        if tail_start_k < max_radius:
+            tail_ramp = (
+                (
+                    (radius - tail_start_k) 
+                    / (tail_full_k - tail_start_k)
+                ).clamp(min=0.0, max=1.0)
+            )
+            tail_weight = 2.0*beta*tail_ramp.pow(power)
+        else:
+            tail_weight = torch.zeros_like(base_weight)
+
+        weight = base_weight + tail_weight
 
         if cutoff_ratio < 1.0:
             mask = normalized_radius <= cutoff_ratio
@@ -298,33 +338,33 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
         )
 
         # Expected output: (batch, variables, spectral_coefficients)
-        kcrps = self._kernel_crps(
+        spectral_kcrps = self._kernel_crps(
             preds_spectral,
             targets_spectral,
             self.alpha,
         )
 
-        if not self.apply_frequency_weight:
-            return kcrps.mean(dim=-1, keepdim=True)
+        #if not self.apply_frequency_weight:
+        return spectral_kcrps #.mean(dim=-1, keepdim=True)
 
         # The same frequency weights apply independently to every local patch.
-        frequency_weight = einops.repeat(
-            self.frequency_weight,
-            "1 1 ky kx -> 1 1 (l ky kx)",
-            l=self.local**2,
-        ).to(
-            device=kcrps.device,
-            dtype=kcrps.real.dtype,
-        )
+        # frequency_weight = einops.repeat(
+        #     self.frequency_weight,
+        #     "1 1 ky kx -> 1 1 (l ky kx)",
+        #     l=self.local**2,
+        # ).to(
+        #     device=kcrps.device,
+        #     dtype=kcrps.real.dtype,
+        # )
 
-        denominator = frequency_weight.sum(dim=-1, keepdim=True)
+        # denominator = frequency_weight.sum(dim=-1, keepdim=True)
 
-        if torch.any(denominator <= 0):
-            raise RuntimeError(
-                "The spectral mask removed all frequencies. Increase cutoff_ratio."
-            )
+        # if torch.any(denominator <= 0):
+        #     raise RuntimeError(
+        #         "The spectral mask removed all frequencies. Increase cutoff_ratio."
+        #     )
 
-        return (kcrps * frequency_weight).sum(dim=-1, keepdim=True) / denominator
+        # return (kcrps * frequency_weight).sum(dim=-1, keepdim=True) / denominator
 
     def forward(
         self,
@@ -406,8 +446,37 @@ class AFCRPSFFTLossNew(AlmostFairKernelCRPS):
             scaler_indices,
             without_scalers=without_scalers,
         )
+        # sum over variable dimension
+        # shape: (bs, 1, G, v) -> (bs, 1, G)
+        scaled = scaled.sum(dim=-1)  
+
+        if self.apply_frequency_weight:
+            frequency_weight = einops.repeat(
+                self.frequency_weight,
+                "1 1 ky kx -> 1 1 (l ky kx)",
+                l=self.local**2,
+            ).to(
+                device=scaled.device,
+                dtype=scaled.real.dtype,
+            )
+            # shape : (1, 1, spectral_coefficients) 
+            # collapse to (1, 1) by summing over spectral coefficients
+            denominator = frequency_weight.sum(dim=-1)
+            
+            if torch.any(denominator <= 0):
+                raise RuntimeError(
+                    "The spectral mask removed all frequencies. "
+                    "Increase cutoff_ratio."
+                )
+            # shape: (bs,1,G) -> (bs,1) by summing over spectral coefficients
+            # G is normalized with respect to frequency_weight, so that the loss is not biased by the number of spectral coefficients.
+            scaled = (scaled * frequency_weight).sum(dim=-1) / denominator
+        else:
+            # shape: (bs,1,G) -> (bs,1) by summing over spectral coefficients
+            scaled = scaled.mean(dim=-1)  # mean over spectral coefficients
+        #val = scaled.mean()
         val = scaled.mean()
-        #print(f"fft_new loss contribution: {val}")
+        #print(f"fft_new2 loss contribution: {val}")
         return val
 
     @property
