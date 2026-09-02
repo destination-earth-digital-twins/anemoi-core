@@ -105,56 +105,222 @@ class NativeGridDataset(IterableDataset):
             self.ensemble_dim: int = 2
             self.ensemble_size = self.data.shape[self.ensemble_dim]
 
+    @staticmethod
+    def _statistics_equal(a, b):
+        if a.keys() != b.keys():
+            return False
 
+        for key in a:
+            x = a[key]
+            y = b[key]
 
+            if isinstance(x, dict):
+                if not isinstance(y, dict):
+                    return False
+
+                if not NativeGridDataset._statistics_equal(x, y):
+                    return False
+
+            elif isinstance(x, np.ndarray):
+                if not isinstance(y, np.ndarray):
+                    return False
+
+                if (
+                    x.shape != y.shape
+                    or x.dtype != y.dtype
+                    or not np.array_equal(x, y)
+                ):
+                    return False
+
+            elif x != y:
+                return False
+
+        return True
 
     @cached_property
-    def statistics(self) -> dict[dict] | dict:
-        """Return dataset statistics."""
-        if self.dynamic_mode:
-            _statistics = {
-                label : domain.statistics for label, domain in self.data.items()
+    def statistics(self) -> dict:
+        """Return statistics used for normalization."""
+
+        if not self.dynamic_mode:
+            return self.data.statistics
+
+        statistics = {
+            label: domain.statistics
+            for label, domain in self.data.items()
+        }
+
+        first_label = next(iter(statistics))
+        first_statistics = statistics[first_label]
+        first_domain = self.data[first_label]
+
+        stats_iter = iter(statistics.values())
+        next(stats_iter)
+
+        statistics_match = all(
+            self._statistics_equal(stats, first_statistics)
+            for stats in stats_iter
+        )
+
+        try:
+            statistics_dataset = (
+                first_domain.arguments["args"][0]["dataset"]
+                .get("statistics", {})
+                .get("dataset", "")
+            )
+
+            uses_aifs_statistics = (
+                isinstance(statistics_dataset, str)
+                and "aifs" in statistics_dataset.lower()
+            )
+
+        except (KeyError, IndexError, AttributeError, TypeError):
+            uses_aifs_statistics = False
+
+        if uses_aifs_statistics:
+            if not statistics_match:
+                raise ValueError(
+                    "AIFS statistics were provided, but statistics differ "
+                    "between regional domains."
+                )
+
+            LOGGER.info(
+                "Using shared AIFS/global statistics for normalization: %s",
+                statistics_dataset,
+            )
+
+        else:
+            LOGGER.info(
+                "AIFS/global statistics were not provided. "
+                "Using regional statistics from domain '%s' "
+                "for normalization across all domains.",
+                first_label,
+            )
+
+        return first_statistics
+    # @cached_property
+    # def statistics(self) -> dict[dict] | dict:
+    #     """Return dataset statistics."""
+    #     if self.dynamic_mode:
+    #         _statistics = {
+    #             label : domain.statistics for label, domain in self.data.items()
+    #         }
+    #         _first_stats = next(iter(_statistics.keys()))
+    #         check_stats = all(
+    #             _statistics[d] == _statistics[_first_stats] for d in _statistics.keys()
+    #         )
+            
+    #         try:
+
+    #             first_domain = self.data[next(iter(self.data.keys()))]
+    #             stat_path = first_domain.arguments["args"][0]["dataset"].get("statistics", "").get("dataset", "").lower().split("/")[-1]
+    #             print(stat_path)
+    #             check_aifs_ds = isinstance(stat_path, str) and "aifs" in stat_path
+    #             print(isinstance(stat_path, str))
+    #             print("aifs" in stat_path.lower())
+    #         except (KeyError, IndexError, AttributeError):
+    #             raise 
+    #             check_aifs_ds = False
+    #         print(_first_stats, check_stats, check_aifs_ds)
+    #         exit()
+    #         if check_stats and check_aifs_ds:
+    #             LOGGER.info(
+    #                 (
+    #                     "All data statistics matches, found ERA5."
+    #                     "Using these statistics for normalization."
+    #                 )
+    #             )
+    #         else:
+    #             LOGGER.info(
+    #                 (
+    #                     "All data statistics does not match! "
+    #                     "Using the first dataset for normalization."
+    #                     f" Using dataset statistics: {next(iter(_statistics.keys()))}"
+    #                 )
+    #             )
+    #         print(next(iter(_statistics.values())))
+    #         return next(iter(_statistics.values()))
+    #     return self.data.statistics
+
+    # @cached_property
+    # def statistics_tendencies(self) -> dict[dict] | dict:
+    #     """Return dataset tendency statistics."""
+    #     try:
+    #         if self.dynamic_mode:
+    #             print("inside dynamic mode inside singledataset.py")
+    #             # a = {
+    #             #     label : domain.statistics_tendencies(self.timestep) for label, domain in self.data.items()
+    #             # }
+    #             # print(a)
+    #             # exit()
+    #             return {
+    #                 label : domain.statistics_tendencies(self.timestep) for label, domain in self.data.items()
+    #             }
+    #         return self.data.statistics_tendencies(self.timestep)
+    #     except (KeyError, AttributeError):
+    #         return None
+    @cached_property
+    def statistics_tendencies(self) -> dict | None:
+        """Return tendency statistics used for normalization."""
+
+        try:
+            if not self.dynamic_mode:
+                return self.data.statistics_tendencies(self.timestep)
+
+            statistics = {
+                label: domain.statistics_tendencies(self.timestep)
+                for label, domain in self.data.items()
             }
 
-            _first_stats = next(iter(_statistics.keys()))
-            check_stats = all(
-                d == _first_stats for d in _statistics.keys()
+            first_label = next(iter(statistics))
+            first_statistics = statistics[first_label]
+            first_domain = self.data[first_label]
+
+            # Check whether all domains have identical tendency statistics.
+            stats_iter = iter(statistics.values())
+            next(stats_iter)
+
+            statistics_match = all(
+                self._statistics_equal(stats, first_statistics)
+                for stats in stats_iter
             )
+
+            # Check whether global AIFS statistics were explicitly provided.
             try:
-                first_domain = self.data[next(iter(self.data.keys()))]
-                stat_path = first_domain.arguments["args"][0].get("statistics", "")
-                check_aifs_ds = isinstance(stat_path, str) and "aifs" in stat_path.lower()
-            except (KeyError, IndexError, AttributeError):
-                check_aifs_ds = False
-            
-            if _first_stats and check_aifs_ds:
-                LOGGER.info(
-                    (
-                        "All data statistics matches, found ERA5."
-                        "Using these statistics for normalization."
-                    )
+                statistics_dataset = (
+                    first_domain.arguments["args"][0]["dataset"]
+                    .get("statistics", {})
+                    .get("dataset", "")
                 )
+
+                uses_aifs_statistics = (
+                    isinstance(statistics_dataset, str)
+                    and "aifs" in statistics_dataset.lower()
+                )
+
+            except (KeyError, IndexError, AttributeError, TypeError):
+                uses_aifs_statistics = False
+
+            if uses_aifs_statistics:
+                if not statistics_match:
+                    raise ValueError(
+                        "AIFS statistics were provided, but tendency statistics "
+                        "differ between regional domains."
+                    )
+
+                LOGGER.info(
+                    "Using shared AIFS/global tendency statistics "
+                    "for normalization."
+                )
+
             else:
                 LOGGER.info(
-                    (
-                        "All data statistics does not match! "
-                        "Using the first dataset for normalization."
-                        f" Using dataset statistics: {next(iter(_statistics.keys()))}"
-                    )
+                    "Using regional tendency statistics from domain '%s' "
+                    "for normalization across all domains.",
+                    first_label,
                 )
 
-            return next(iter(_statistics.values()))
-        return self.data.statistics
+            return first_statistics
 
-    @cached_property
-    def statistics_tendencies(self) -> dict[dict] | dict:
-        """Return dataset tendency statistics."""
-        try:
-            if self.dynamic_mode:
-                return {
-                    label : domain.statistics_tendencies(self.timestep) for label, domain in self.data.items()
-                }
-            return self.data.statistics_tendencies(self.timestep)
         except (KeyError, AttributeError):
             return None
 
