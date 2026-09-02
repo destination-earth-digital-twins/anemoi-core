@@ -649,6 +649,7 @@ class AnemoiTrainer:
             self.model,
             datamodule=self.datamodule,
             ckpt_path=None if (self.load_weights_only) else self.last_checkpoint,
+            weights_only=False,
         )
 
         if self.config.diagnostics.print_memory_summary:

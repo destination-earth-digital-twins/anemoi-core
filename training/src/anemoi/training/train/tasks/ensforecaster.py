@@ -405,7 +405,9 @@ class GraphEnsForecaster(BaseGraphModule):
         return loss, metrics, y_preds, _ens_ic
 
     def allgather_batch(self, batch: torch.Tensor, label: str = None) -> torch.Tensor:
-        batch[0] = super().allgather_batch(batch[0], label=label)
+        batch = list(batch)
+        d = super().allgather_batch(batch[0], label=label)
+        batch[0]=d
         if len(batch) == 2:
             batch[1] = super().allgather_batch(batch[1], label=label)
         return batch
